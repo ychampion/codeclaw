@@ -82,7 +82,80 @@ from .export import (  # noqa: F811
 )
 
 
+def _handle_prep(args: argparse.Namespace) -> None:
+    prep(source_filter=args.source)
+
+
+def _handle_status(args: argparse.Namespace) -> None:
+    status()
+
+
+def _handle_confirm(args: argparse.Namespace) -> None:
+    if (
+        args.attest_asked_full_name
+        or args.attest_asked_sensitive
+        or args.attest_asked_manual_scan
+        or args.attest_manual_scan == "__DEPRECATED_FLAG__"
+    ):
+        print(json.dumps({
+            "error": "Deprecated boolean attestation flags were provided.",
+            "hint": (
+                "Use text attestations instead so the command can validate what was reviewed."
+            ),
+            "blocked_on_step": "Step 2/3",
+            "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
+            "next_command": CONFIRM_COMMAND_EXAMPLE,
+        }, indent=2))
+        sys.exit(1)
+    confirm(
+        file_path=args.file,
+        full_name=args.full_name,
+        attest_asked_full_name=args.attest_full_name,
+        attest_asked_sensitive=args.attest_sensitive,
+        attest_manual_scan=args.attest_manual_scan,
+        skip_full_name_scan=args.skip_full_name_scan,
+    )
+
+
+def _handle_update_skill(args: argparse.Namespace) -> None:
+    update_skill(args.target)
+
+
+def _handle_list(args: argparse.Namespace) -> None:
+    from .export import load_config as _load_config
+    config = _load_config()
+    resolved_source_choice, _ = _resolve_source_choice(args.source, config)
+    list_projects(source_filter=resolved_source_choice)
+
+
+def _handle_serve(args: argparse.Namespace) -> None:
+    handle_serve()
+
+
+def _handle_install_mcp(args: argparse.Namespace) -> None:
+    handle_install_mcp()
+
+
 def main() -> None:
+    COMMAND_HANDLERS = {
+        "prep": _handle_prep,
+        "status": _handle_status,
+        "confirm": _handle_confirm,
+        "update-skill": _handle_update_skill,
+        "synthesize": _handle_synthesize,
+        "serve": _handle_serve,
+        "install-mcp": _handle_install_mcp,
+        "watch": _handle_watch,
+        "setup": handle_setup,
+        "projects": handle_projects,
+        "list": _handle_list,
+        "config": _handle_config,
+        "doctor": handle_doctor,
+        "stats": handle_stats,
+        "share": handle_share,
+        "export": _run_export,
+    }
+
     parser = argparse.ArgumentParser(description="CodeClaw — Claude/Codex -> Hugging Face")
     sub = parser.add_subparsers(dest="command")
 
@@ -217,91 +290,5 @@ def main() -> None:
 
     args = parser.parse_args()
     command = args.command or "export"
-
-    if command == "prep":
-        prep(source_filter=args.source)
-        return
-
-    if command == "status":
-        status()
-        return
-
-    if command == "confirm":
-        if (
-            args.attest_asked_full_name
-            or args.attest_asked_sensitive
-            or args.attest_asked_manual_scan
-            or args.attest_manual_scan == "__DEPRECATED_FLAG__"
-        ):
-            print(json.dumps({
-                "error": "Deprecated boolean attestation flags were provided.",
-                "hint": (
-                    "Use text attestations instead so the command can validate what was reviewed."
-                ),
-                "blocked_on_step": "Step 2/3",
-                "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                "next_command": CONFIRM_COMMAND_EXAMPLE,
-            }, indent=2))
-            sys.exit(1)
-        confirm(
-            file_path=args.file,
-            full_name=args.full_name,
-            attest_asked_full_name=args.attest_full_name,
-            attest_asked_sensitive=args.attest_sensitive,
-            attest_manual_scan=args.attest_manual_scan,
-            skip_full_name_scan=args.skip_full_name_scan,
-        )
-        return
-
-    if command == "update-skill":
-        update_skill(args.target)
-        return
-
-    if command == "synthesize":
-        _handle_synthesize(args)
-        return
-
-    if command == "serve":
-        handle_serve()
-        return
-
-    if command == "install-mcp":
-        handle_install_mcp()
-        return
-
-    if command == "watch":
-        _handle_watch(args)
-        return
-
-    if command == "setup":
-        handle_setup(args)
-        return
-
-    if command == "projects":
-        handle_projects(args)
-        return
-
-    if command == "list":
-        from .export import load_config as _load_config
-        config = _load_config()
-        resolved_source_choice, _ = _resolve_source_choice(args.source, config)
-        list_projects(source_filter=resolved_source_choice)
-        return
-
-    if command == "config":
-        _handle_config(args)
-        return
-
-    if command == "doctor":
-        handle_doctor(args)
-        return
-
-    if command == "stats":
-        handle_stats(args)
-        return
-
-    if command == "share":
-        handle_share(args)
-        return
-
-    _run_export(args)
+    handler = COMMAND_HANDLERS.get(command, _run_export)
+    handler(args)
