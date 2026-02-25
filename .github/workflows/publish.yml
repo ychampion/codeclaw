@@ -21,6 +21,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: pypi
+    env:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
     permissions:
       id-token: write
     steps:
@@ -31,14 +33,14 @@ jobs:
       - run: pip install build
       - run: python -m build
       - name: Publish with API token (if configured)
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        if: ${{ env.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          password: ${{ env.PYPI_API_TOKEN }}
           skip-existing: true
       - name: Publish with trusted publisher (OIDC fallback)
-        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        if: ${{ env.PYPI_API_TOKEN == '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
