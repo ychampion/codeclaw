@@ -60,6 +60,10 @@ def test_readme_does_not_reference_removed_update_kb_command():
     assert removed not in _read(README)
 
 
+def test_readme_has_no_public_roadmap_section():
+    assert "## Roadmap" not in _read(README)
+
+
 def test_codeclaw_json_marker_consistency():
     legacy_marker = "DATA" + "CLAW_JSON"
     for path in (DOC_SKILL, CLAUDE_SKILL, EXPORT_FILE):
