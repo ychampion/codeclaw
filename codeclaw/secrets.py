@@ -146,10 +146,17 @@ def _shannon_entropy(s: str) -> float:
 
 def _has_mixed_char_types(s: str) -> bool:
     """Check if string has a mix of uppercase, lowercase, and digits."""
-    has_upper = any(c.isupper() for c in s)
-    has_lower = any(c.islower() for c in s)
-    has_digit = any(c.isdigit() for c in s)
-    return has_upper and has_lower and has_digit
+    has_upper = has_lower = has_digit = False
+    for c in s:
+        if c.isupper():
+            has_upper = True
+        elif c.islower():
+            has_lower = True
+        elif c.isdigit():
+            has_digit = True
+        if has_upper and has_lower and has_digit:
+            return True
+    return False
 
 
 def scan_text(text: str) -> list[dict]:
@@ -201,28 +208,40 @@ def redact_text(text: str) -> tuple[str, int]:
         if not deduped or f["end"] <= deduped[-1]["start"]:
             deduped.append(f)
 
-    # Replace from end-to-start (deduped is already in descending start order)
-    result = text
+    # Replace from end-to-start using parts joining for performance
+    parts = []
+    last_pos = len(text)
     for f in deduped:
-        result = result[:f["start"]] + REDACTED + result[f["end"]:]
+        parts.append(text[f["end"]:last_pos])
+        parts.append(REDACTED)
+        last_pos = f["start"]
+    parts.append(text[:last_pos])
 
-    return result, len(deduped)
+    return "".join(reversed(parts)), len(deduped)
 
 
 def redact_custom_strings(text: str, strings: list[str]) -> tuple[str, int]:
+    """Redact custom strings from text in a single pass for performance."""
     if not text or not strings:
         return text, 0
 
-    count = 0
+    patterns = []
     for target in strings:
         if not target or len(target) < 3:
             continue
         escaped = re.escape(target)
-        pattern = rf"\b{escaped}\b" if len(target) >= 4 else escaped
-        text, replacements = re.subn(pattern, REDACTED, text)
-        count += replacements
+        # Use word boundaries for strings of length 4 or more
+        if len(target) >= 4:
+            patterns.append(rf"\b{escaped}\b")
+        else:
+            patterns.append(escaped)
 
-    return text, count
+    if not patterns:
+        return text, 0
+
+    # Combine all patterns into a single regex for O(N) scan
+    combined = re.compile("|".join(patterns))
+    return combined.subn(REDACTED, text)
 
 
 def redact_session(session: dict, custom_strings: list[str] | None = None) -> tuple[dict, int]:
