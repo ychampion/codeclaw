@@ -10,6 +10,8 @@ import sys
 
 from ..config import CodeClawConfig, load_config, save_config
 from ..parser import detect_current_project, discover_projects
+from ..source_adapters import iter_external_adapters
+from ..storage import ensure_encryption_key, encryption_status
 from ._helpers import (
     EXPLICIT_SOURCE_CHOICES,
     _filter_projects_by_source,
@@ -297,6 +299,16 @@ def handle_setup(args) -> None:
     config["repo"] = repo_id
     config["repo_private"] = repo_private
     config["connected_projects"] = connected_projects
+    config["adapter_tiers"] = {
+        adapter.name: adapter.tier for adapter in iter_external_adapters()
+    }
+    config["router_strategy"] = "intelligent_fallback"
+    config["dataset_versioning_mode"] = "immutable_snapshots"
+    if "encryption_enabled" not in config:
+        config["encryption_enabled"] = True
+    enc_ready, enc_key_ref, enc_backend = ensure_encryption_key(config)
+    if enc_ready and enc_key_ref:
+        config["encryption_key_ref"] = enc_key_ref
     config["projects_confirmed"] = True
     config["stage"] = "configure"
     save_config(config)
@@ -334,6 +346,11 @@ def handle_setup(args) -> None:
             "start_requested": start_watch_requested,
             "status": watch_status,
             "error": watch_error,
+        },
+        "encryption": {
+            "initialized": enc_ready,
+            "backend": enc_backend,
+            **encryption_status(config),
         },
         "next_steps": _build_next_steps(hf_username, repo_id, source_choice),
     }

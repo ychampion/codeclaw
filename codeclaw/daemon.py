@@ -19,6 +19,7 @@ from .anonymizer import Anonymizer
 from .cli import export_to_jsonl, push_to_huggingface
 from .config import load_config, save_config
 from .parser import PROJECTS_DIR, discover_projects
+from .storage import maybe_encrypt_file, read_text, write_text
 
 CODECLAW_DIR = Path.home() / ".codeclaw"
 PID_FILE = CODECLAW_DIR / "daemon.pid"
@@ -98,17 +99,20 @@ def _append_file(src: Path, dst: Path) -> None:
     if not src.exists() or src.stat().st_size == 0:
         return
     CODECLAW_DIR.mkdir(parents=True, exist_ok=True)
-    with open(src, "r", encoding="utf-8") as inf, open(dst, "a", encoding="utf-8") as outf:
-        for line in inf:
-            outf.write(line)
+    src_text = read_text(src, config=load_config())
+    if not src_text.strip():
+        return
+    existing = read_text(dst, config=load_config()) if dst.exists() else ""
+    merged = existing + ("" if existing.endswith("\n") or not existing else "\n") + src_text
+    write_text(dst, merged)
+    maybe_encrypt_file(dst, config=load_config())
 
 
 def _count_jsonl(path: Path) -> int:
     if not path.exists():
         return 0
     try:
-        with open(path, encoding="utf-8") as f:
-            return sum(1 for line in f if line.strip())
+        return sum(1 for line in read_text(path, config=load_config()).splitlines() if line.strip())
     except OSError:
         return 0
 
@@ -118,9 +122,11 @@ def _rotate_pending() -> Path | None:
         return None
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     archive_file = ARCHIVE_DIR / f"{datetime.now(tz=timezone.utc):%Y%m%d}.jsonl"
-    with open(PENDING_FILE, "r", encoding="utf-8") as src, open(archive_file, "a", encoding="utf-8") as dst:
-        for line in src:
-            dst.write(line)
+    pending_text = read_text(PENDING_FILE, config=load_config())
+    existing = read_text(archive_file, config=load_config()) if archive_file.exists() else ""
+    merged = existing + ("" if existing.endswith("\n") or not existing else "\n") + pending_text
+    write_text(archive_file, merged)
+    maybe_encrypt_file(archive_file, config=load_config())
     PENDING_FILE.unlink(missing_ok=True)
     return archive_file
 

@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import signal
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ..anonymizer import Anonymizer
+from ..classifier import classify_trajectory
 from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
 from ..parser import discover_projects, parse_project_sessions
+from ..source_adapters import adapter_diagnostics
+from ..storage import encryption_status
 from ._helpers import (
     _filter_projects_by_source,
     _format_size,
@@ -176,6 +181,8 @@ def handle_doctor(args) -> None:
     projects, project_discovery_error = _discover_projects_safe(source_filter) if has_sources else ([], None)
     hf_user = get_hf_username()
     mcp = _check_mcp_registration()
+    encryption = encryption_status(config)
+    adapters = adapter_diagnostics()
     connected = set(config.get("connected_projects", []))
     connected_available = sorted(
         str(project.get("display_name", "")) for project in projects if str(project.get("display_name", "")) in connected
@@ -221,6 +228,15 @@ def handle_doctor(args) -> None:
             ),
         },
         "mcp_registration": mcp,
+        "encryption": {
+            "ok": bool(encryption.get("enabled")) and bool(encryption.get("crypto_available")),
+            "message": (
+                "Encryption is configured and crypto backend is available."
+                if bool(encryption.get("enabled")) and bool(encryption.get("crypto_available"))
+                else "Encryption fallback/disabled: run codeclaw setup to initialize secure key storage."
+            ),
+            **encryption,
+        },
     }
     ok = all(bool(item.get("ok")) for item in checks.values())
 
@@ -231,6 +247,8 @@ def handle_doctor(args) -> None:
         next_steps.append("Run: huggingface-cli login --token <HF_WRITE_TOKEN>")
     if not checks["mcp_registration"]["ok"]:
         next_steps.append("Run: codeclaw install-mcp")
+    if not checks["encryption"]["ok"]:
+        next_steps.append("Run: codeclaw config --encryption on or codeclaw setup to initialize encryption.")
     if stale_connected:
         next_steps.append("Run: codeclaw projects to review connected project scope.")
     if not checks["project_discovery"]["ok"] and checks["session_sources"]["ok"]:
@@ -241,6 +259,11 @@ def handle_doctor(args) -> None:
         "source": source_choice,
         "source_selection_confirmed": source_explicit,
         "checks": checks,
+        "platform_checks": {
+            "os": sys.platform,
+            "sigusr1_available": hasattr(signal, "SIGUSR1"),
+            "adapter_diagnostics": adapters,
+        },
         "next_steps": next_steps,
     }
     print(json.dumps(payload, indent=2))
@@ -335,9 +358,59 @@ def handle_stats(args) -> None:
             "input_tokens": lifetime_input,
             "output_tokens": lifetime_output,
         },
+        "dataset_versioning": {
+            "mode": config.get("dataset_versioning_mode"),
+            "latest_version": config.get("dataset_latest_version"),
+            "dedupe_entries": len(config.get("published_dedupe_index", {})),
+        },
         "last_export": config.get("last_export"),
     }
+    if getattr(args, "skill", False):
+        payload["skill"] = _build_skill_metrics(sessions)
     print(json.dumps(payload, indent=2))
+
+
+def _build_skill_metrics(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute simple growth-oriented trajectory analytics."""
+    if not sessions:
+        return {
+            "score": 0.0,
+            "trajectory_counts": {},
+            "timeline": [],
+        }
+
+    weights = {
+        "debugging_trace": 2.0,
+        "iterative_build": 1.5,
+        "refactor": 1.2,
+        "correction_loop": 1.0,
+        "sft_clean": 0.8,
+    }
+    trajectory_counts: dict[str, int] = {}
+    timeline: dict[str, dict[str, int]] = {}
+    weighted = 0.0
+    for session in sessions:
+        label = str(session.get("trajectory_type") or classify_trajectory(session))
+        trajectory_counts[label] = trajectory_counts.get(label, 0) + 1
+        weighted += weights.get(label, 1.0)
+        start = session.get("start_time")
+        if isinstance(start, str) and start:
+            month = start[:7]
+        else:
+            month = datetime.now().strftime("%Y-%m")
+        bucket = timeline.setdefault(month, {})
+        bucket[label] = bucket.get(label, 0) + 1
+
+    avg_score = round(weighted / max(len(sessions), 1), 3)
+    timeline_rows = [
+        {"month": month, "trajectory_counts": timeline[month]}
+        for month in sorted(timeline.keys())
+    ]
+    return {
+        "score": avg_score,
+        "trajectory_counts": trajectory_counts,
+        "timeline": timeline_rows,
+    }
 
 
 def handle_share(args) -> None:
@@ -498,6 +571,7 @@ def handle_share(args) -> None:
         "published": published,
         "repo": repo_id,
         "dataset_url": dataset_url,
+        "dataset_latest_version": config.get("dataset_latest_version"),
         "source": source_choice,
         "source_selection_confirmed": source_explicit,
         "output_file": str(output_path.resolve()),

@@ -63,6 +63,8 @@ codeclaw list                              # List all projects with exclusion st
 codeclaw projects                          # Show connected project scope
 codeclaw projects --connect "proj1,proj2" # Connect specific projects
 codeclaw projects --use-current            # Connect only current project
+codeclaw diff                              # Show what redaction pipeline will remove before confirm
+codeclaw stats --skill                     # Show growth-oriented trajectory metrics
 codeclaw list --source both                # List Claude + Codex projects
 codeclaw list --source codex               # List only Codex projects
 codeclaw config                            # Show current config
@@ -72,6 +74,7 @@ codeclaw config --exclude "a,b"            # Add excluded projects (appends)
 codeclaw config --redact "str1,str2"       # Add strings to redact (appends)
 codeclaw config --redact-usernames "u1,u2" # Add usernames to anonymize (appends)
 codeclaw config --confirm-projects         # Mark project selection as confirmed
+codeclaw config --encryption status        # Check encryption-at-rest state
 codeclaw export --publish-attestation "..." # Export and push (requires codeclaw confirm first)
 codeclaw export --no-push                  # Export locally only
 codeclaw export --source both --no-push    # Export Claude + Codex sessions

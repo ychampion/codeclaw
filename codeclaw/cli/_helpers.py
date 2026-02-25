@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
 from ..parser import CLAUDE_DIR, CODEX_DIR, detect_current_project, discover_projects
+from ..source_adapters import iter_external_adapters
 from ..secrets import _has_mixed_char_types, _shannon_entropy
 
 HF_TAG = "codeclaw"
@@ -52,8 +53,18 @@ SETUP_TO_PUBLISH_STEPS = [
     "Step 6/6: After explicit user approval, publish: codeclaw export --publish-attestation \"User explicitly approved publishing to Hugging Face.\"",
 ]
 
+EXTERNAL_SOURCE_CHOICES = {
+    "cursor",
+    "windsurf",
+    "aider",
+    "continue",
+    "antigravity",
+    "vscode",
+    "zed",
+    "xcode-beta",
+}
 EXPLICIT_SOURCE_CHOICES = {"claude", "codex", "both"}
-SOURCE_CHOICES = ["auto", "claude", "codex", "both"]
+SOURCE_CHOICES = ["auto", "claude", "codex", "both", *sorted(EXTERNAL_SOURCE_CHOICES)]
 _HF_DATASET_URL_RE = re.compile(r"^https?://huggingface\.co/datasets/([^/\s]+/[^/\s?#]+)/*$", re.IGNORECASE)
 
 
@@ -78,6 +89,8 @@ def _source_label(source_filter: str) -> str:
         return "Claude Code"
     if source_filter == "codex":
         return "Codex"
+    if source_filter in EXTERNAL_SOURCE_CHOICES:
+        return source_filter
     return "Claude Code or Codex"
 
 
@@ -116,7 +129,13 @@ def _has_session_sources(source_filter: str = "auto") -> bool:
         return CLAUDE_DIR.exists()
     if source_filter == "codex":
         return CODEX_DIR.exists()
-    return CLAUDE_DIR.exists() or CODEX_DIR.exists()
+    if source_filter in EXTERNAL_SOURCE_CHOICES:
+        for adapter in iter_external_adapters():
+            if adapter.name == source_filter:
+                return any(root.exists() for root in adapter.roots)
+        return False
+    external_has_logs = any(any(root.exists() for root in adapter.roots) for adapter in iter_external_adapters())
+    return CLAUDE_DIR.exists() or CODEX_DIR.exists() or external_has_logs
 
 
 def _filter_projects_by_source(projects: list[dict], source_filter: str) -> list[dict]:

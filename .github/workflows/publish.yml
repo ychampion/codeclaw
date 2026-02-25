@@ -17,8 +17,22 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: python -m pytest tests/ -v
 
-  publish:
+  build-check:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: pip install --force-reinstall dist/*.whl
+      - run: python -m codeclaw --help
+
+  publish:
+    needs: build-check
     runs-on: ubuntu-latest
     environment: pypi
     env:
@@ -32,6 +46,8 @@ jobs:
           python-version: "3.12"
       - run: pip install build
       - run: python -m build
+      - run: pip install twine
+      - run: python -m twine check dist/*
       - name: Publish with API token (if configured)
         if: ${{ env.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -44,3 +60,27 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  publish-github-packages:
+    needs: build-check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - name: Publish to GitHub Packages (Python)
+        env:
+          TWINE_USERNAME: ${{ github.actor }}
+          TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m twine upload \
+            --repository-url https://pypi.pkg.github.com/${{ github.repository_owner }}/ \
+            dist/*

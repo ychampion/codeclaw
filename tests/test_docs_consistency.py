@@ -70,6 +70,7 @@ def test_readme_command_table_uses_implemented_subcommands():
         "status",
         "prep",
         "confirm",
+        "diff",
         "list",
         "doctor",
         "stats",

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codeclaw"
-version = "0.4.0"
+version = "0.4.1"
 description = "Export your Claude Code and Codex conversations to Hugging Face as structured training data"
 requires-python = ">=3.10"
 license = "MIT"
@@ -25,6 +25,8 @@ classifiers = [
 ]
 dependencies = [
     "huggingface_hub>=0.20.0",
+    "cryptography>=42.0.0",
+    "keyring>=24.0.0",
 ]
 
 [project.urls]
@@ -39,6 +41,15 @@ codeclaw = "codeclaw.cli:main"
 dev = ["pytest"]
 watch = ["watchdog"]
 mcp = ["mcp"]
+pii-ml = [
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.7.0",
+]
+finetune = [
+    "unsloth>=2025.1.0; platform_system != 'Windows'",
+    "transformers>=4.49.0",
+    "datasets>=2.20.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["codeclaw*"]

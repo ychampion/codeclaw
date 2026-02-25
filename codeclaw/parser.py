@@ -9,6 +9,7 @@ from typing import Any
 
 from .anonymizer import Anonymizer
 from .secrets import redact_text
+from .source_adapters import discover_external_projects, parse_external_project_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ def discover_projects() -> list[dict]:
     """Discover Claude Code and Codex projects with session counts."""
     projects = _discover_claude_projects()
     projects.extend(_discover_codex_projects())
+    projects.extend(discover_external_projects())
     return sorted(projects, key=lambda p: (p["display_name"], p["source"]))
 
 
@@ -133,37 +135,106 @@ def parse_project_sessions(
     anonymizer: Anonymizer,
     include_thinking: bool = True,
     source: str = CLAUDE_SOURCE,
+    fallback: bool = True,
 ) -> list[dict]:
     """Parse all sessions for a project into structured dicts."""
-    if source == CODEX_SOURCE:
-        index = _get_codex_project_index()
-        session_files = index.get(project_dir_name, [])
-        sessions = []
-        for session_file in session_files:
-            parsed = _parse_codex_session_file(
-                session_file,
+    try:
+        if source == CODEX_SOURCE:
+            index = _get_codex_project_index()
+            session_files = index.get(project_dir_name, [])
+            sessions = []
+            for session_file in session_files:
+                parsed = _parse_codex_session_file(
+                    session_file,
+                    anonymizer=anonymizer,
+                    include_thinking=include_thinking,
+                    target_cwd=project_dir_name,
+                )
+                if parsed and parsed["messages"]:
+                    parsed["project"] = _build_codex_project_name(project_dir_name)
+                    parsed["source"] = CODEX_SOURCE
+                    sessions.append(parsed)
+            if sessions or not fallback:
+                return sessions
+            return parse_project_sessions(
+                project_dir_name,
                 anonymizer=anonymizer,
                 include_thinking=include_thinking,
-                target_cwd=project_dir_name,
+                source=CLAUDE_SOURCE,
+                fallback=False,
             )
-            if parsed and parsed["messages"]:
-                parsed["project"] = _build_codex_project_name(project_dir_name)
-                parsed["source"] = CODEX_SOURCE
-                sessions.append(parsed)
-        return sessions
 
-    project_path = PROJECTS_DIR / project_dir_name
-    if not project_path.exists():
+        if source == CLAUDE_SOURCE:
+            project_path = PROJECTS_DIR / project_dir_name
+            if not project_path.exists():
+                if fallback:
+                    return parse_project_sessions(
+                        project_dir_name,
+                        anonymizer=anonymizer,
+                        include_thinking=include_thinking,
+                        source=CODEX_SOURCE,
+                        fallback=False,
+                    )
+                return []
+
+            sessions = []
+            for session_file in sorted(project_path.glob("*.jsonl")):
+                parsed = _parse_claude_session_file(session_file, anonymizer, include_thinking)
+                if parsed and parsed["messages"]:
+                    parsed["project"] = _build_project_name(project_dir_name)
+                    parsed["source"] = CLAUDE_SOURCE
+                    sessions.append(parsed)
+            if sessions or not fallback:
+                return sessions
+            return parse_project_sessions(
+                project_dir_name,
+                anonymizer=anonymizer,
+                include_thinking=include_thinking,
+                source=CODEX_SOURCE,
+                fallback=False,
+            )
+
+        sessions = parse_external_project_sessions(
+            source=source,
+            project_dir_name=project_dir_name,
+            anonymizer=anonymizer,
+            include_thinking=include_thinking,
+        )
+        if sessions or not fallback:
+            return sessions
+        # Best-effort fallback for unknown source adapters.
+        for fallback_source in (CLAUDE_SOURCE, CODEX_SOURCE):
+            parsed = parse_project_sessions(
+                project_dir_name,
+                anonymizer=anonymizer,
+                include_thinking=include_thinking,
+                source=fallback_source,
+                fallback=False,
+            )
+            if parsed:
+                return parsed
         return []
-
-    sessions = []
-    for session_file in sorted(project_path.glob("*.jsonl")):
-        parsed = _parse_claude_session_file(session_file, anonymizer, include_thinking)
-        if parsed and parsed["messages"]:
-            parsed["project"] = _build_project_name(project_dir_name)
-            parsed["source"] = CLAUDE_SOURCE
-            sessions.append(parsed)
-    return sessions
+    except Exception as exc:
+        logger.exception("Adapter parse failed for source=%s project=%s: %s", source, project_dir_name, exc)
+        if not fallback:
+            return []
+        if source == CLAUDE_SOURCE:
+            return parse_project_sessions(
+                project_dir_name,
+                anonymizer=anonymizer,
+                include_thinking=include_thinking,
+                source=CODEX_SOURCE,
+                fallback=False,
+            )
+        if source == CODEX_SOURCE:
+            return parse_project_sessions(
+                project_dir_name,
+                anonymizer=anonymizer,
+                include_thinking=include_thinking,
+                source=CLAUDE_SOURCE,
+                fallback=False,
+            )
+        return []
 
 
 def _make_stats() -> dict[str, int]:

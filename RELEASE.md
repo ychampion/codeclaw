@@ -1,6 +1,6 @@
 # Release Process
 
-This project publishes to PyPI from GitHub Actions.
+This project publishes to PyPI from GitHub Actions and can mirror artifacts to GitHub Packages.
 
 ## Publishing Modes
 
@@ -10,6 +10,13 @@ The publish workflow supports two authentication paths:
 - API token fallback via repository secret `PYPI_API_TOKEN`.
 
 If `PYPI_API_TOKEN` is set, it is used first. Otherwise the workflow uses trusted publishing.
+
+## GitHub Packages Mirror
+
+The publish workflow includes a GitHub Packages (Python) upload step using the repository `GITHUB_TOKEN`.
+
+- repository URL: `https://pypi.pkg.github.com/<OWNER>/`
+- install index URL: `https://pypi.pkg.github.com/<OWNER>/simple/`
 
 ## One-Time Setup (Recommended: Trusted Publishing)
 
@@ -33,6 +40,8 @@ If you are not using trusted publishing:
 1. Validate locally:
    - `python -m pytest -q`
    - `python -m build`
+   - `python -m twine check dist/*`
+   - `python -m codeclaw --help`
 2. Create and push tag:
    - `git tag -a vX.Y.Z -m "CodeClaw vX.Y.Z"`
    - `git push origin vX.Y.Z`

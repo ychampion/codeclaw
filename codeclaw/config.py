@@ -18,6 +18,16 @@ class CodeClawConfig(TypedDict, total=False):
     repo_private: bool
     source: str | None  # "claude" | "codex" | "both"
     connected_projects: list[str]
+    encryption_enabled: bool
+    encryption_key_ref: str | None
+    pii_engine: str  # "regex" | "ml" | "auto"
+    pii_model_size: str  # "small" | "large"
+    pii_confidence_threshold: float
+    adapter_tiers: dict[str, str]
+    router_strategy: str
+    dataset_versioning_mode: str
+    dataset_latest_version: str | None
+    published_dedupe_index: dict[str, dict[str, str]]
     excluded_projects: list[str]
     redact_strings: list[str]
     redact_usernames: list[str]
@@ -45,6 +55,16 @@ DEFAULT_CONFIG: CodeClawConfig = {
     "repo_private": True,
     "source": None,
     "connected_projects": [],
+    "encryption_enabled": True,
+    "encryption_key_ref": None,
+    "pii_engine": "auto",
+    "pii_model_size": "small",
+    "pii_confidence_threshold": 0.55,
+    "adapter_tiers": {},
+    "router_strategy": "intelligent_fallback",
+    "dataset_versioning_mode": "immutable_snapshots",
+    "dataset_latest_version": None,
+    "published_dedupe_index": {},
     "excluded_projects": [],
     "redact_strings": [],
     "redact_usernames": [],

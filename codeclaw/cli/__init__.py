@@ -13,6 +13,7 @@ from ._helpers import (
     MIN_MANUAL_SCAN_SESSIONS,
 )
 from .config import _handle_config
+from .diff import handle_diff
 from .export import (
     _run_export,
     confirm,
@@ -22,6 +23,7 @@ from .export import (
 )
 from .growth import handle_doctor, handle_share, handle_stats
 from .mcp import handle_install_mcp, handle_serve
+from .finetune import handle_finetune
 from .projects import handle_projects
 from .setup import handle_setup
 from .update import _handle_synthesize, update_skill
@@ -128,6 +130,10 @@ def _handle_list(args: argparse.Namespace) -> None:
     list_projects(source_filter=resolved_source_choice)
 
 
+def _handle_diff(args: argparse.Namespace) -> None:
+    handle_diff(args)
+
+
 def _handle_serve(args: argparse.Namespace) -> None:
     handle_serve()
 
@@ -136,11 +142,16 @@ def _handle_install_mcp(args: argparse.Namespace) -> None:
     handle_install_mcp()
 
 
+def _handle_finetune(args: argparse.Namespace) -> None:
+    handle_finetune(args)
+
+
 def main() -> None:
     COMMAND_HANDLERS = {
         "prep": _handle_prep,
         "status": _handle_status,
         "confirm": _handle_confirm,
+        "diff": _handle_diff,
         "update-skill": _handle_update_skill,
         "synthesize": _handle_synthesize,
         "serve": _handle_serve,
@@ -153,6 +164,7 @@ def main() -> None:
         "doctor": handle_doctor,
         "stats": handle_stats,
         "share": handle_share,
+        "finetune": _handle_finetune,
         "export": _run_export,
     }
 
@@ -180,6 +192,11 @@ def main() -> None:
     cf.add_argument("--attest-asked-manual-scan", action="store_true", help=argparse.SUPPRESS)
     list_parser = sub.add_parser("list", help="List all projects")
     list_parser.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    diff = sub.add_parser("diff", help="Preview exactly what would be redacted")
+    diff.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    diff.add_argument("--all-projects", action="store_true")
+    diff.add_argument("--limit", type=int, default=100)
+    diff.add_argument("--format", choices=["json", "text"], default="json")
 
     us = sub.add_parser("update-skill", help="Install/update the codeclaw skill for a coding agent")
     us.add_argument("target", choices=["claude"], help="Agent to install skill for")
@@ -250,6 +267,11 @@ def main() -> None:
                      help="Comma-separated project names to disable dataset generation for")
     cfg.add_argument("--enable-project", type=str,
                      help="Comma-separated project names to re-enable dataset generation for")
+    cfg.add_argument(
+        "--encryption",
+        choices=["on", "off", "status"],
+        help="Set encryption-at-rest mode (or inspect status).",
+    )
 
     sub.add_parser("serve", help="Run the CodeClaw MCP server over stdio")
     sub.add_parser("install-mcp", help="Install CodeClaw MCP server into Claude mcp.json")
@@ -257,6 +279,7 @@ def main() -> None:
     doctor.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
     stats_cmd = sub.add_parser("stats", help="Show usage and export metrics")
     stats_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    stats_cmd.add_argument("--skill", action="store_true", help="Include skill growth analytics")
     share = sub.add_parser("share", help="One-command export flow with optional publish")
     share.add_argument("--output", "-o", type=Path, default=None)
     share.add_argument("--repo", "-r", type=str, default=None)
@@ -270,6 +293,12 @@ def main() -> None:
         default=None,
         help="Required with --publish: text attestation that publishing was explicitly approved.",
     )
+
+    # Preview command for local fine-tune research.
+    finetune = sub.add_parser("finetune", help="Experimental fine-tune scaffold (preview)")
+    finetune.add_argument("--experimental", action="store_true")
+    finetune.add_argument("--dataset", type=str, default=None)
+    finetune.add_argument("--output", type=str, default=None)
 
     exp = sub.add_parser("export", help="Export and push (default)")
     # Export flags on both the subcommand and root parser so `codeclaw --no-push` works

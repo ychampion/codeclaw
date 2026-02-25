@@ -1,59 +1,165 @@
-"""Session trajectory classifier heuristics."""
+"""Session trajectory classifier heuristics with weighted signal scoring."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+CORRECTION_SIGNALS = (
+    "wrong",
+    "error",
+    "that's not",
+    "fix",
+    "broken",
+    "failed",
+    "doesn't work",
+    "incorrect",
+    "bug",
+    "not what i",
+    "that won't",
+    "not right",
+    "regression",
+)
+
+DEBUG_SIGNALS = (
+    "error",
+    "traceback",
+    "stack trace",
+    "failing",
+    "failed test",
+    "exception",
+    "segfault",
+    "assertionerror",
+    "lint failed",
+    "test failed",
+)
+
+REFACTOR_SIGNALS = (
+    "refactor",
+    "clean up",
+    "rewrite",
+    "simplify",
+    "restructure",
+    "reorganize",
+    "consolidate",
+    "tech debt",
+)
+
+BUILD_SIGNALS = (
+    "implement",
+    "add feature",
+    "create",
+    "build",
+    "scaffold",
+    "ship",
+)
+
+DEBUG_TOOLS = {
+    "bash",
+    "python",
+    "execute",
+    "pytest",
+    "ruff",
+    "mypy",
+}
+
+EDIT_TOOLS = {
+    "read",
+    "write",
+    "edit",
+    "glob",
+    "grep",
+}
+
+
+@dataclass
+class _Score:
+    correction_loop: float = 0.0
+    debugging_trace: float = 0.0
+    iterative_build: float = 0.0
+    refactor: float = 0.0
+    sft_clean: float = 0.0
+
+
+def _lower(value: object) -> str:
+    return str(value or "").lower()
+
+
+def _contains_any(text: str, signals: tuple[str, ...]) -> bool:
+    return any(signal in text for signal in signals)
+
+
+def _tool_names(messages: list[dict]) -> list[str]:
+    names: list[str] = []
+    for message in messages:
+        for tool_use in message.get("tool_uses", []):
+            names.append(_lower(tool_use.get("tool")))
+    return names
 
 
 def classify_trajectory(session: dict) -> str:
-    """
-    Assign trajectory_type to a session based on message content heuristics.
-    Returns one of: correction_loop | debugging_trace | iterative_build | refactor | sft_clean
-    """
+    """Assign a trajectory label from weighted conversational/tool signals."""
     messages = session.get("messages", [])
+    if not isinstance(messages, list) or not messages:
+        return "sft_clean"
 
-    CORRECTION_SIGNALS = [
-        "wrong",
-        "error",
-        "that's not",
-        "fix",
-        "broken",
-        "failed",
-        "doesn't work",
-        "incorrect",
-        "bug",
-        "not what i",
-        "that won't",
-        "not right",
-    ]
-    DEBUG_TOOLS = ["bash", "python", "execute"]
-    REFACTOR_SIGNALS = ["refactor", "clean up", "rewrite", "simplify", "restructure", "reorganize", "consolidate"]
+    score = _Score(sft_clean=0.2)
+    tool_names = _tool_names(messages)
+    has_debug_tool = any(name in DEBUG_TOOLS for name in tool_names)
+    has_edit_tool = any(name in EDIT_TOOLS for name in tool_names)
 
-    # Check for correction loop: user message after assistant that contains correction signal
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "user" and i > 0:
-            content = str(msg.get("content", "")).lower()
-            if any(sig in content for sig in CORRECTION_SIGNALS):
-                return "correction_loop"
+    # User correction loops: user follows assistant with correction intent.
+    for idx, message in enumerate(messages):
+        if _lower(message.get("role")) != "user" or idx == 0:
+            continue
+        previous_role = _lower(messages[idx - 1].get("role"))
+        if previous_role != "assistant":
+            continue
+        content = _lower(message.get("content"))
+        if _contains_any(content, CORRECTION_SIGNALS):
+            score.correction_loop += 2.0
+            score.debugging_trace += 0.5
 
-    # Check for debugging trace: tool uses with bash + error outputs
-    has_bash = any(
-        any(str(t.get("tool", "")).lower() in DEBUG_TOOLS for t in msg.get("tool_uses", []))
-        for msg in messages if msg.get("role") == "assistant"
-    )
-    has_error_output = any(
-        "error" in str(msg.get("content", "")).lower()
-        or "traceback" in str(msg.get("content", "")).lower()
-        for msg in messages
-    )
-    if has_bash and has_error_output:
-        return "debugging_trace"
+    # Textual error/debug context from any role.
+    for message in messages:
+        content = _lower(message.get("content"))
+        if _contains_any(content, DEBUG_SIGNALS):
+            score.debugging_trace += 1.5
+        if _contains_any(content, CORRECTION_SIGNALS):
+            score.correction_loop += 0.5
 
-    # Refactor
-    first_user = next((m for m in messages if m.get("role") == "user"), None)
+    # Intent signals from the first user request.
+    first_user = next((m for m in messages if _lower(m.get("role")) == "user"), None)
     if first_user:
-        content = str(first_user.get("content", "")).lower()
-        if any(sig in content for sig in REFACTOR_SIGNALS):
-            return "refactor"
+        prompt = _lower(first_user.get("content"))
+        if _contains_any(prompt, REFACTOR_SIGNALS):
+            score.refactor += 2.2
+        if _contains_any(prompt, BUILD_SIGNALS):
+            score.iterative_build += 1.0
 
-    # Iterative build: long sessions with tool use but no corrections
-    if len(messages) > 8 and has_bash:
+    # Tool-based shaping.
+    if has_debug_tool:
+        score.debugging_trace += 1.2
+        score.iterative_build += 0.4
+    if has_edit_tool:
+        score.iterative_build += 0.8
+        score.refactor += 0.3
+
+    # Long sessions with many tool calls tend to iterative build.
+    tool_events = len(tool_names)
+    if len(messages) >= 8:
+        score.iterative_build += 1.0
+    if tool_events >= 6:
+        score.iterative_build += 1.1
+
+    # Strong priority guards for high-confidence classes.
+    if score.correction_loop >= 2.0:
+        return "correction_loop"
+    if has_debug_tool and score.debugging_trace >= 1.8:
+        return "debugging_trace"
+    if score.refactor >= 2.0:
+        return "refactor"
+    if score.iterative_build >= 2.0:
         return "iterative_build"
 
     return "sft_clean"

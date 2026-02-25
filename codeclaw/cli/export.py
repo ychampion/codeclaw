@@ -6,13 +6,16 @@ import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 
 from ..anonymizer import Anonymizer
 from ..classifier import classify_trajectory
 from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
 from ..parser import CLAUDE_DIR, CODEX_DIR, detect_current_project, discover_projects, parse_project_sessions
-from ..secrets import _has_mixed_char_types, _shannon_entropy, redact_session
+from ..redactor import RedactionEngine, redact_session_with_findings
+from ..secrets import _has_mixed_char_types, _shannon_entropy
+from ..storage import is_encrypted_text, maybe_encrypt_file, read_jsonl, read_text
 
 from ._helpers import (
     CONFIRM_COMMAND_EXAMPLE,
@@ -78,6 +81,11 @@ def export_to_jsonl(
     """Export selected projects to JSONL. Returns metadata."""
     config = load_config()
     synced_session_ids = set(config.get("synced_session_ids", []))
+    redaction_engine = RedactionEngine(
+        engine=str(config.get("pii_engine", "auto")),
+        model_size=str(config.get("pii_model_size", "small")),
+        confidence_threshold=float(config.get("pii_confidence_threshold", 0.55)),
+    )
     total = 0
     skipped = 0
     total_redactions = 0
@@ -110,7 +118,11 @@ def export_to_jsonl(
                     skipped += 1
                     continue
 
-                session, n_redacted = redact_session(session, custom_strings=custom_strings)
+                session, n_redacted, _findings = redact_session_with_findings(
+                    session,
+                    custom_strings=custom_strings,
+                    engine=redaction_engine,
+                )
                 total_redactions += n_redacted
                 session_id = str(session.get("session_id", ""))
                 if session_id in synced_session_ids:
@@ -135,6 +147,8 @@ def export_to_jsonl(
                 project_names.append(project["display_name"])
             print(f" {proj_count} sessions")
 
+    maybe_encrypt_file(output_path, config=config)
+
     return {
         "sessions": total,
         "skipped": skipped,
@@ -155,6 +169,11 @@ def _safe_project_name(name: str) -> str:
     return safe or "unknown"
 
 
+def _session_fingerprint(session: dict) -> str:
+    canonical = json.dumps(session, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _list_project_configs(files: list[str]) -> list[str]:
     projects = sorted({
         parts[1]
@@ -167,14 +186,7 @@ def _list_project_configs(files: list[str]) -> list[str]:
 
 
 def _read_sessions_from_jsonl(jsonl_path: Path) -> list[dict]:
-    sessions: list[dict] = []
-    with open(jsonl_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            sessions.append(json.loads(line))
-    return sessions
+    return read_jsonl(jsonl_path, config=load_config())
 
 
 def push_to_huggingface(
@@ -190,8 +202,9 @@ def push_to_huggingface(
         print("Error: huggingface_hub not installed. Run: pip install huggingface_hub", file=sys.stderr)
         sys.exit(1)
 
+    config = load_config()
     api = HfApi()
-    private_repo = bool(load_config().get("repo_private", True)) if private is None else bool(private)
+    private_repo = bool(config.get("repo_private", True)) if private is None else bool(private)
 
     try:
         user_info = api.whoami()
@@ -206,9 +219,18 @@ def push_to_huggingface(
         api.create_repo(repo_id, repo_type="dataset", private=private_repo, exist_ok=True)
 
         sessions = _read_sessions_from_jsonl(jsonl_path)
+        dedupe_index = dict(config.get("published_dedupe_index", {}))
+        version_mode = str(config.get("dataset_versioning_mode", "immutable_snapshots"))
+        version_id = datetime.now(tz=timezone.utc).strftime("v%Y%m%d-%H%M%S")
+        uploaded_hashes: list[str] = []
+        skipped_duplicates = 0
         uploaded_projects: set[str] = set()
         ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
         for session in sessions:
+            session_hash = _session_fingerprint(session)
+            if session_hash in dedupe_index:
+                skipped_duplicates += 1
+                continue
             project = _safe_project_name(str(session.get("project", "unknown")))
             uploaded_projects.add(project)
             session_id = str(session.get("session_id", "unknown"))[:8] or "unknown"
@@ -219,19 +241,66 @@ def push_to_huggingface(
                 repo_id=repo_id, repo_type="dataset",
                 commit_message=f"Add session {session_id} to {project}",
             )
+            uploaded_hashes.append(session_hash)
+            dedupe_index[session_hash] = {
+                "session_id": str(session.get("session_id", "")),
+                "project": str(session.get("project", "")),
+                "version": version_id,
+                "published_at": datetime.now(tz=timezone.utc).isoformat(),
+            }
+
+        card_meta = dict(meta)
+        card_meta["latest_version"] = version_id
 
         api.upload_file(
-            path_or_fileobj=json.dumps(meta, indent=2).encode(),
+            path_or_fileobj=json.dumps(card_meta, indent=2).encode(),
             path_in_repo="metadata.json",
             repo_id=repo_id, repo_type="dataset",
             commit_message="Update metadata",
+        )
+
+        version_manifest = {
+            "version": version_id,
+            "mode": version_mode,
+            "published_at": datetime.now(tz=timezone.utc).isoformat(),
+            "repo": repo_id,
+            "sessions_uploaded": len(uploaded_hashes),
+            "sessions_skipped_duplicates": skipped_duplicates,
+            "hashes": uploaded_hashes[:1000],
+            "source_meta": {
+                "sessions": meta.get("sessions", 0),
+                "projects": meta.get("projects", []),
+                "redactions": meta.get("redactions", 0),
+            },
+        }
+        api.upload_file(
+            path_or_fileobj=json.dumps(version_manifest, indent=2).encode(),
+            path_in_repo=f"versions/{version_id}.json",
+            repo_id=repo_id,
+            repo_type="dataset",
+            commit_message=f"Add immutable dataset version {version_id}",
+        )
+        api.upload_file(
+            path_or_fileobj=json.dumps(
+                {
+                    "latest_version": version_id,
+                    "published_at": version_manifest["published_at"],
+                    "sessions_uploaded": version_manifest["sessions_uploaded"],
+                    "sessions_skipped_duplicates": skipped_duplicates,
+                },
+                indent=2,
+            ).encode(),
+            path_in_repo="versions/latest.json",
+            repo_id=repo_id,
+            repo_type="dataset",
+            commit_message=f"Update latest dataset version pointer to {version_id}",
         )
 
         repo_files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
         project_configs = _list_project_configs(repo_files)
 
         api.upload_file(
-            path_or_fileobj=_build_dataset_card(repo_id, meta, project_configs).encode(),
+            path_or_fileobj=_build_dataset_card(repo_id, card_meta, project_configs).encode(),
             path_in_repo="README.md",
             repo_id=repo_id, repo_type="dataset",
             commit_message="Update dataset card",
@@ -243,14 +312,16 @@ def push_to_huggingface(
         print(f"Error reading {jsonl_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    config = load_config()
     synced = set(config.get("synced_session_ids", []))
     synced.update(meta.get("exported_session_ids", []))
     config["synced_session_ids"] = sorted(synced)
     config["last_synced_at"] = datetime.now(tz=timezone.utc).isoformat()
+    config["dataset_latest_version"] = version_id
+    config["published_dedupe_index"] = dedupe_index
     save_config(config)
 
     print(f"\nDataset: https://huggingface.co/datasets/{repo_id}")
+    print(f"Latest version: {version_id}")
     print(f"Browse all: https://huggingface.co/datasets?other={HF_TAG}")
 
 
@@ -279,6 +350,7 @@ def _record_export_metrics(
         "total_output_tokens": output_tokens,
         "published": published,
         "repo": repo_id,
+        "latest_version": config.get("dataset_latest_version"),
     }
 
     if update_totals:
@@ -306,6 +378,7 @@ def _build_dataset_card(repo_id: str, meta: dict, project_configs: list[str] | N
     total_input = meta.get("total_input_tokens", 0)
     total_output = meta.get("total_output_tokens", 0)
     timestamp = meta.get("exported_at", "")[:10]
+    latest_version = meta.get("latest_version") or "unknown"
     project_configs = project_configs or []
 
     model_tags = "\n".join(f"  - {m}" for m in sorted(models.keys()) if m != "unknown")
@@ -359,6 +432,7 @@ Exported with [CodeClaw]({REPO_URL}).
 | Input tokens | {_format_token_count(total_input)} |
 | Output tokens | {_format_token_count(total_output)} |
 | Last updated | {timestamp} |
+| Latest version | {latest_version} |
 
 ### Models
 
@@ -600,7 +674,7 @@ def _scan_pii(file_path: Path) -> dict:
 
     results = {}
     try:
-        content = file_path.read_text(errors="replace")
+        content = read_text(file_path, config=load_config())
     except OSError:
         return {}
 
@@ -618,6 +692,30 @@ def _scan_pii(file_path: Path) -> dict:
     if high_entropy:
         results["high_entropy_strings"] = high_entropy
 
+    cfg = load_config()
+    engine = RedactionEngine(
+        engine=str(cfg.get("pii_engine", "auto")),
+        model_size=str(cfg.get("pii_model_size", "small")),
+        confidence_threshold=float(cfg.get("pii_confidence_threshold", 0.55)),
+    )
+    ml_findings = [
+        {
+            "source": finding.source,
+            "category": finding.category,
+            "score": round(float(finding.score), 3),
+            "text": finding.text[:120],
+        }
+        for finding in engine.scan(content)
+        if finding.source == "ml"
+    ]
+    if ml_findings:
+        results["ml_entities"] = ml_findings[:40]
+        results["ml_engine"] = {
+            "enabled": engine.engine != "regex",
+            "available": engine.ml_available,
+            "confidence_threshold": engine.confidence_threshold,
+        }
+
     return results
 
 
@@ -634,15 +732,15 @@ def _scan_for_text_occurrences(
     matches = 0
     examples: list[dict[str, object]] = []
     try:
-        with open(file_path, encoding="utf-8", errors="replace") as f:
-            for line_no, line in enumerate(f, start=1):
-                if pattern.search(line):
-                    matches += 1
-                    if len(examples) < max_examples:
-                        excerpt = line.strip()
-                        if len(excerpt) > 220:
-                            excerpt = f"{excerpt[:220]}..."
-                        examples.append({"line": line_no, "excerpt": excerpt})
+        content = read_text(file_path, config=load_config())
+        for line_no, line in enumerate(content.splitlines(), start=1):
+            if pattern.search(line):
+                matches += 1
+                if len(examples) < max_examples:
+                    excerpt = line.strip()
+                    if len(excerpt) > 220:
+                        excerpt = f"{excerpt[:220]}..."
+                    examples.append({"line": line_no, "excerpt": excerpt})
     except OSError as e:
         return {
             "query": query,
@@ -823,17 +921,12 @@ def confirm(
     models: dict[str, int] = {}
     total = 0
     try:
-        with open(file_path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                row = json.loads(line)
-                total += 1
-                proj = row.get("project", "<unknown>")
-                projects[proj] = projects.get(proj, 0) + 1
-                model = row.get("model", "<unknown>")
-                models[model] = models.get(model, 0) + 1
+        for row in _read_sessions_from_jsonl(file_path):
+            total += 1
+            proj = row.get("project", "<unknown>")
+            projects[proj] = projects.get(proj, 0) + 1
+            model = row.get("model", "<unknown>")
+            models[model] = models.get(model, 0) + 1
     except (OSError, json.JSONDecodeError) as e:
         print(json.dumps({"error": f"Cannot read {file_path}: {e}"}))
         sys.exit(1)
@@ -1304,6 +1397,7 @@ def _run_export(args) -> None:
         "stage_number": 4,
         "total_stages": 4,
         "dataset_url": f"https://huggingface.co/datasets/{repo_id}",
+        "dataset_latest_version": config.get("dataset_latest_version"),
         "next_steps": [
             "Done! Dataset is live. To update later: codeclaw export",
             "To reconfigure: codeclaw prep then codeclaw config",
@@ -1317,6 +1411,12 @@ def _run_export(args) -> None:
 def _build_pii_commands(output_path: Path) -> list[str]:
     """Return grep commands for PII scanning."""
     p = str(output_path.resolve())
+    encrypted = is_encrypted_text(read_text(output_path, config=load_config()))
+    if encrypted:
+        return [
+            "codeclaw diff --format json",
+            "codeclaw confirm --file <export-file> --full-name \"THEIR FULL NAME\" --attest-full-name \"...\" --attest-sensitive \"...\" --attest-manual-scan \"...\"",
+        ]
     if os.name == "nt":
         return [
             f'Select-String -Path "{p}" -Pattern "[a-zA-Z0-9.+-]+@[a-zA-Z0-9.-]+\\.[a-z]{{2,}}" | Select-Object -First 20',
@@ -1335,12 +1435,19 @@ def _build_pii_commands(output_path: Path) -> list[str]:
 def _print_pii_guidance(output_path: Path) -> None:
     """Print PII review guidance with concrete grep commands."""
     abs_output = output_path.resolve()
+    encrypted = is_encrypted_text(read_text(output_path, config=load_config()))
     print(f"\n{'=' * 50}")
     print("  IMPORTANT: Review your data before publishing!")
     print(f"{'=' * 50}")
     print("CodeClaw's automatic redaction is NOT foolproof.")
     print("You should scan the exported data for remaining PII.")
     print()
+    if encrypted:
+        print("Export is encrypted-at-rest. Use built-in review commands:")
+        print("  codeclaw diff --format json")
+        print(f"  codeclaw confirm --file {abs_output} --full-name \"THEIR NAME\" --attest-full-name \"...\" --attest-sensitive \"...\" --attest-manual-scan \"...\"")
+        print()
+        return
     print("Quick checks (run these and review any matches):")
     if os.name == "nt":
         print(f"  Select-String -Path \"{abs_output}\" -Pattern 'your_name' | Select-Object -First 10")

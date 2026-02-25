@@ -4,6 +4,7 @@ import json
 import sys
 
 from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
+from ..storage import ensure_encryption_key, encryption_status
 
 from ._helpers import (
     _mask_config_for_display,
@@ -46,6 +47,7 @@ def configure(
     dataset_enabled: bool | None = None,
     disable_projects: list[str] | None = None,
     enable_projects: list[str] | None = None,
+    encryption: str | None = None,
 ):
     """Set config values non-interactively. Lists are MERGED (append), not replaced."""
     config = load_config()
@@ -84,6 +86,13 @@ def configure(
         _merge_config_list(config, "disabled_projects", disable_projects)
     if enable_projects is not None:
         _remove_from_config_list(config, "disabled_projects", enable_projects)
+    if encryption == "on":
+        config["encryption_enabled"] = True
+        available, key_ref, _backend = ensure_encryption_key(config)
+        if available and key_ref:
+            config["encryption_key_ref"] = key_ref
+    elif encryption == "off":
+        config["encryption_enabled"] = False
     save_config(config)
     print(f"Config saved to {CONFIG_FILE}")
     print(json.dumps(_mask_config_for_display(config), indent=2))
@@ -107,7 +116,11 @@ def _handle_config(args) -> None:
         or dataset_enabled is not None
         or getattr(args, "disable_project", None)
         or getattr(args, "enable_project", None)
+        or getattr(args, "encryption", None)
     )
+    if getattr(args, "encryption", None) == "status":
+        print(json.dumps({"ok": True, "encryption": encryption_status(load_config())}, indent=2))
+        return
     if not has_changes:
         print(json.dumps(_mask_config_for_display(load_config()), indent=2))
         return
@@ -121,4 +134,5 @@ def _handle_config(args) -> None:
         dataset_enabled=dataset_enabled,
         disable_projects=_parse_csv_arg(getattr(args, "disable_project", None)),
         enable_projects=_parse_csv_arg(getattr(args, "enable_project", None)),
+        encryption=getattr(args, "encryption", None),
     )

@@ -1,0 +1,12 @@
+{
+  "name": "CodeClaw Export (Opt-in)",
+  "description": "Template workflow for teams to export and publish CodeClaw datasets after merged PRs.",
+  "iconName": "package",
+  "categories": [
+    "Python",
+    "Automation"
+  ],
+  "filePatterns": [
+    ".*"
+  ]
+}
