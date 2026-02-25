@@ -399,6 +399,15 @@ All CodeClaw datasets are tagged `codeclaw` on Hugging Face.
 
 ---
 
+## Community
+
+- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy: [SECURITY.md](SECURITY.md)
+- Support channels: [SUPPORT.md](SUPPORT.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
+---
+
 ## License
 
 MIT — the dataset you produce is yours. Do what you want with it.
