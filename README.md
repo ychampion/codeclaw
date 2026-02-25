@@ -42,15 +42,13 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```bash
-# Authenticate once
-huggingface-cli login --token YOUR_HF_TOKEN
+# Guided onboarding (HF auth help, repo setup, project scope, MCP, watcher)
+codeclaw setup
 
-# Discover and configure
-codeclaw prep
+# Verify environment and connected scope
 codeclaw doctor
-codeclaw config --source both
-codeclaw list --source both
-codeclaw config --repo username/cc-logs
+codeclaw projects --source both
+codeclaw stats
 
 # Export locally first
 codeclaw export --no-push
@@ -75,8 +73,10 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 |---------|-------------|
 | `codeclaw status` | Show current stage and next steps (JSON) |
 | `codeclaw prep` | Discover projects and auth state |
+| `codeclaw setup` | Guided onboarding (HF, dataset repo, projects, MCP, watcher) |
 | `codeclaw doctor` | Verify logs, HF auth, and MCP registration |
 | `codeclaw stats` | Show session, token, redaction, and export metrics |
+| `codeclaw projects` | Manage connected project scope |
 | `codeclaw list` | List projects with source, size, and exclusion state |
 | `codeclaw config ...` | Configure repo, sources, exclusions, and redactions |
 | `codeclaw export --no-push` | Export locally for review |

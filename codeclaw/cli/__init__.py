@@ -22,8 +22,10 @@ from .export import (
 )
 from .growth import handle_doctor, handle_share, handle_stats
 from .mcp import handle_install_mcp, handle_serve
+from .projects import handle_projects
+from .setup import handle_setup
 from .update import _handle_synthesize, update_skill
-from .watch import _handle_watch, _run_setup_wizard
+from .watch import _handle_watch
 
 # Re-export everything that was previously importable from codeclaw.cli
 # to maintain backwards compatibility
@@ -51,6 +53,7 @@ from ._helpers import (  # noqa: F811
     _source_label,
     default_repo_name,
     get_hf_username,
+    normalize_repo_id,
 )
 from .config import (  # noqa: F811
     _get_disabled_projects,
@@ -122,6 +125,37 @@ def main() -> None:
 
     setup = sub.add_parser("setup", help="Run setup wizard")
     setup.add_argument("--yes", action="store_true", help="Accept setup defaults")
+    setup.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    setup.add_argument("--repo", type=str, default=None, help="Dataset repo ID or Hugging Face dataset URL")
+    visibility = setup.add_mutually_exclusive_group()
+    visibility.add_argument("--private", dest="private", action="store_true", help="Use a private dataset repo")
+    visibility.add_argument("--public", dest="private", action="store_false", help="Use a public dataset repo")
+    setup.set_defaults(private=None)
+    setup.add_argument(
+        "--connect-projects",
+        type=str,
+        default=None,
+        help="Comma-separated project names to connect during setup",
+    )
+    setup.add_argument("--install-mcp", action="store_true", help="Install MCP server during setup")
+    setup.add_argument("--start-watch", action="store_true", help="Start watcher daemon during setup")
+
+    projects_cmd = sub.add_parser("projects", help="Manage connected project scope")
+    projects_cmd.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    projects_cmd.add_argument("--connect", type=str, default=None, help="Comma-separated project names to connect")
+    projects_cmd.add_argument(
+        "--disconnect",
+        type=str,
+        default=None,
+        help="Comma-separated project names to disconnect",
+    )
+    projects_cmd.add_argument("--use-current", action="store_true", help="Connect only the current project")
+    projects_cmd.add_argument("--all", action="store_true", help="Connect all discovered projects")
+    projects_cmd.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear connected projects (all discovered projects become eligible)",
+    )
 
     cfg = sub.add_parser("config", help="View or set config")
     cfg.add_argument("--repo", type=str, help="Set HF repo")
@@ -240,7 +274,11 @@ def main() -> None:
         return
 
     if command == "setup":
-        _run_setup_wizard(args)
+        handle_setup(args)
+        return
+
+    if command == "projects":
+        handle_projects(args)
         return
 
     if command == "list":

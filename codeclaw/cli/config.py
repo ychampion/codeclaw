@@ -1,12 +1,14 @@
 """Config command and all --flag handlers."""
 
 import json
+import sys
 
 from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
 
 from ._helpers import (
     _mask_config_for_display,
     _parse_csv_arg,
+    normalize_repo_id,
 )
 
 
@@ -48,7 +50,24 @@ def configure(
     """Set config values non-interactively. Lists are MERGED (append), not replaced."""
     config = load_config()
     if repo is not None:
-        config["repo"] = repo
+        normalized_repo = normalize_repo_id(repo)
+        if normalized_repo is None:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "Invalid dataset repo format.",
+                        "hint": (
+                            "Use username/dataset-name or a URL like "
+                            "https://huggingface.co/datasets/username/dataset-name"
+                        ),
+                        "provided": repo,
+                    },
+                    indent=2,
+                )
+            )
+            sys.exit(1)
+        config["repo"] = normalized_repo
     if source is not None:
         config["source"] = source
     if exclude is not None:

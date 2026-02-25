@@ -1,4 +1,6 @@
-"""Persistent config for CodeClaw — stored at ~/.codeclaw/config.json"""
+"""Persistent config for CodeClaw, stored at ~/.codeclaw/config.json."""
+
+from __future__ import annotations
 
 import json
 import sys
@@ -7,20 +9,21 @@ from typing import TypedDict
 
 CONFIG_DIR = Path.home() / ".codeclaw"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-LEGACY_CONFIG_FILE = Path.home() / ".codeclaw" / "config.json"
 
 
 class CodeClawConfig(TypedDict, total=False):
     """Expected shape of the config dict."""
 
     repo: str | None
+    repo_private: bool
     source: str | None  # "claude" | "codex" | "both"
+    connected_projects: list[str]
     excluded_projects: list[str]
     redact_strings: list[str]
     redact_usernames: list[str]
     last_export: dict
     stage: str | None  # "auth" | "configure" | "review" | "confirmed" | "done"
-    projects_confirmed: bool  # True once user has addressed folder exclusions
+    projects_confirmed: bool
     watch_interval_seconds: int
     min_sessions_before_push: int
     auto_push: bool
@@ -39,33 +42,44 @@ class CodeClawConfig(TypedDict, total=False):
 
 DEFAULT_CONFIG: CodeClawConfig = {
     "repo": None,
+    "repo_private": True,
     "source": None,
+    "connected_projects": [],
     "excluded_projects": [],
     "redact_strings": [],
+    "redact_usernames": [],
+    "projects_confirmed": False,
     "synced_session_ids": [],
+    "dataset_enabled": True,
+    "disabled_projects": [],
     "watch_interval_seconds": 60,
     "min_sessions_before_push": 5,
     "auto_push": False,
+    "stats_total_exports": 0,
+    "stats_total_publishes": 0,
+    "stats_total_exported_sessions": 0,
+    "stats_total_redactions": 0,
+    "stats_total_input_tokens": 0,
+    "stats_total_output_tokens": 0,
 }
 
 
 def load_config() -> CodeClawConfig:
-    source = CONFIG_FILE if CONFIG_FILE.exists() else LEGACY_CONFIG_FILE
-    if source.exists():
+    if CONFIG_FILE.exists():
         try:
-            with open(source) as f:
+            with open(CONFIG_FILE, encoding="utf-8", errors="replace") as f:
                 stored = json.load(f)
             return {**DEFAULT_CONFIG, **stored}
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"Warning: could not read {source}: {e}", file=sys.stderr)
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Warning: could not read {CONFIG_FILE}: {exc}", file=sys.stderr)
     return dict(DEFAULT_CONFIG)
 
 
 def save_config(config: CodeClawConfig) -> None:
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
         CONFIG_FILE.chmod(0o600)
-    except OSError as e:
-        print(f"Warning: could not save {CONFIG_FILE}: {e}", file=sys.stderr)
+    except OSError as exc:
+        print(f"Warning: could not save {CONFIG_FILE}: {exc}", file=sys.stderr)

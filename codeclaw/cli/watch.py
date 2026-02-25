@@ -1,4 +1,4 @@
-"""Watch --start/--stop/--status/--now subcommand and daemon/setup control."""
+"""Watch daemon subcommand handlers."""
 
 import json
 
@@ -21,10 +21,7 @@ def _handle_watch(args) -> None:
 
 
 def _run_setup_wizard(args) -> None:
-    answer = "y" if args.yes else input("Auto-start background watcher? (y/n) [y]: ").strip().lower() or "y"
-    if answer.startswith("y"):
-        from ..daemon import start_daemon
+    """Backward-compatible wrapper to the guided setup handler."""
+    from .setup import handle_setup
 
-        print(json.dumps(start_daemon(), indent=2))
-    else:
-        print(json.dumps({"auto_start_watch": False}, indent=2))
+    handle_setup(args)

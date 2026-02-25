@@ -53,12 +53,16 @@ After `codeclaw export --no-push`, follow the `next_steps` in the JSON output. T
 ```bash
 codeclaw status                            # Show current stage and next steps (JSON)
 codeclaw prep                              # Discover projects, check HF auth (JSON)
+codeclaw setup                             # Guided onboarding (HF, dataset, projects, MCP, watcher)
 codeclaw prep --source both                # Claude + Codex sessions
 codeclaw prep --source codex               # Only Codex sessions
 codeclaw prep --source claude              # Only Claude Code sessions
 codeclaw confirm --full-name "NAME" --attest-full-name "..." --attest-sensitive "..." --attest-manual-scan "..." # Scan PII, verify attestations, unlock pushing (JSON)
 codeclaw confirm --file /path/to/file.jsonl --full-name "NAME" --attest-full-name "..." --attest-sensitive "..." --attest-manual-scan "..." # Confirm a specific export file
 codeclaw list                              # List all projects with exclusion status
+codeclaw projects                          # Show connected project scope
+codeclaw projects --connect "proj1,proj2" # Connect specific projects
+codeclaw projects --use-current            # Connect only current project
 codeclaw list --source both                # List Claude + Codex projects
 codeclaw list --source codex               # List only Codex projects
 codeclaw config                            # Show current config

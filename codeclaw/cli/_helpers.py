@@ -54,6 +54,7 @@ SETUP_TO_PUBLISH_STEPS = [
 
 EXPLICIT_SOURCE_CHOICES = {"claude", "codex", "both"}
 SOURCE_CHOICES = ["auto", "claude", "codex", "both"]
+_HF_DATASET_URL_RE = re.compile(r"^https?://huggingface\.co/datasets/([^/\s]+/[^/\s?#]+)/*$", re.IGNORECASE)
 
 
 def _mask_secret(s: str) -> str:
@@ -276,3 +277,23 @@ def _parse_csv_arg(value: str | None) -> list[str] | None:
     if not value:
         return None
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def normalize_repo_id(value: str | None) -> str | None:
+    """Normalize a dataset repo argument into 'namespace/name' or return None."""
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+
+    match = _HF_DATASET_URL_RE.match(raw)
+    if match:
+        return match.group(1).rstrip("/")
+
+    repo_id = raw.rstrip("/")
+    if repo_id.count("/") != 1:
+        return None
+    if repo_id.startswith("/") or repo_id.endswith("/"):
+        return None
+    return repo_id

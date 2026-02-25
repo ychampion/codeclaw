@@ -304,8 +304,22 @@ def trigger_sync_now() -> dict[str, object]:
     logger = _setup_logger()
     pid = _read_pid()
     if pid:
-        os.kill(pid, signal.SIGUSR1)
-        return {"triggered": True, "pid": pid}
+        if hasattr(signal, "SIGUSR1"):
+            try:
+                os.kill(pid, signal.SIGUSR1)
+                return {"triggered": True, "pid": pid, "mode": "signal"}
+            except OSError:
+                sessions = _poll_once(logger)
+                return {"triggered": True, "standalone": True, "sessions": sessions, "mode": "signal_fallback"}
+        # Windows does not expose SIGUSR1; run one local sync cycle instead.
+        sessions = _poll_once(logger)
+        return {
+            "triggered": True,
+            "standalone": True,
+            "sessions": sessions,
+            "running_pid": pid,
+            "mode": "standalone_fallback",
+        }
     sessions = _poll_once(logger)
     return {"triggered": True, "standalone": True, "sessions": sessions}
 

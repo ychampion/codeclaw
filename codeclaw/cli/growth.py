@@ -19,6 +19,7 @@ from ._helpers import (
     _resolve_source_choice,
     default_repo_name,
     get_hf_username,
+    normalize_repo_id,
 )
 from .config import _get_disabled_projects
 from .export import (
@@ -119,20 +120,35 @@ def _iter_sessions(projects: list[dict[str, Any]], extra_usernames: list[str]) -
     return sessions
 
 
+def _discover_projects_safe(source_filter: str) -> tuple[list[dict[str, Any]], str | None]:
+    try:
+        return _filter_projects_by_source(discover_projects(), source_filter), None
+    except Exception as exc:  # pragma: no cover - defensive path
+        return [], f"{type(exc).__name__}: {exc}"
+
+
 def _project_scope(
     config: CodeClawConfig,
     source_choice: str,
     include_all_projects: bool,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[str]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[str], list[str], str | None]:
     source_filter = _normalize_source_filter(source_choice)
-    projects = _filter_projects_by_source(discover_projects(), source_filter)
+    projects, discovery_error = _discover_projects_safe(source_filter)
+    if discovery_error is not None:
+        return [], [], [], [], [], discovery_error
+
     excluded = set() if include_all_projects else set(config.get("excluded_projects", []))
     disabled = _get_disabled_projects(config)
+    connected = set() if include_all_projects else set(config.get("connected_projects", []))
     included: list[dict[str, Any]] = []
     excluded_names: list[str] = []
     disabled_names: list[str] = []
+    disconnected_names: list[str] = []
     for project in projects:
         name = str(project.get("display_name", ""))
+        if connected and name not in connected:
+            disconnected_names.append(name)
+            continue
         if name in excluded:
             excluded_names.append(name)
             continue
@@ -140,7 +156,14 @@ def _project_scope(
             disabled_names.append(name)
             continue
         included.append(project)
-    return projects, included, sorted(excluded_names), sorted(disabled_names)
+    return (
+        projects,
+        included,
+        sorted(excluded_names),
+        sorted(disabled_names),
+        sorted(disconnected_names),
+        None,
+    )
 
 
 def handle_doctor(args) -> None:
@@ -150,9 +173,14 @@ def handle_doctor(args) -> None:
     source_filter = _normalize_source_filter(source_choice)
 
     has_sources = _has_session_sources(source_filter)
-    projects = _filter_projects_by_source(discover_projects(), source_filter) if has_sources else []
+    projects, project_discovery_error = _discover_projects_safe(source_filter) if has_sources else ([], None)
     hf_user = get_hf_username()
     mcp = _check_mcp_registration()
+    connected = set(config.get("connected_projects", []))
+    connected_available = sorted(
+        str(project.get("display_name", "")) for project in projects if str(project.get("display_name", "")) in connected
+    )
+    stale_connected = sorted(name for name in connected if name and name not in connected_available)
 
     checks = {
         "config_file": {
@@ -170,11 +198,16 @@ def handle_doctor(args) -> None:
             ),
         },
         "project_discovery": {
-            "ok": len(projects) > 0,
+            "ok": project_discovery_error is None and len(projects) > 0,
             "project_count": len(projects),
+            "connected_count": len(connected_available),
+            "stale_connected_projects": stale_connected,
+            "error": project_discovery_error,
             "message": (
                 f"Discovered {len(projects)} project(s)."
-                if projects
+                if project_discovery_error is None and projects
+                else "Project discovery failed."
+                if project_discovery_error is not None
                 else "No projects discovered in the selected source scope."
             ),
         },
@@ -198,6 +231,8 @@ def handle_doctor(args) -> None:
         next_steps.append("Run: huggingface-cli login --token <HF_WRITE_TOKEN>")
     if not checks["mcp_registration"]["ok"]:
         next_steps.append("Run: codeclaw install-mcp")
+    if stale_connected:
+        next_steps.append("Run: codeclaw projects to review connected project scope.")
     if not checks["project_discovery"]["ok"] and checks["session_sources"]["ok"]:
         next_steps.append("Run: codeclaw prep to inspect source scope and project detection.")
 
@@ -217,11 +252,24 @@ def handle_stats(args) -> None:
     """Report local session/export metrics so the dataset pipeline feels alive."""
     config = load_config()
     source_choice, source_explicit = _resolve_source_choice(args.source, config)
-    projects, included, excluded_names, disabled_names = _project_scope(
+    projects, included, excluded_names, disabled_names, disconnected_names, scope_error = _project_scope(
         config=config,
         source_choice=source_choice,
         include_all_projects=False,
     )
+    if scope_error is not None:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "Project discovery failed while computing stats.",
+                    "detail": scope_error,
+                    "source": source_choice,
+                },
+                indent=2,
+            )
+        )
+        sys.exit(1)
 
     sessions = _iter_sessions(included, config.get("redact_usernames", [])) if included else []
     session_ids = {
@@ -261,6 +309,7 @@ def handle_stats(args) -> None:
             "projects_included": len(included),
             "excluded_projects": excluded_names,
             "disabled_projects": disabled_names,
+            "disconnected_projects": disconnected_names,
         },
         "summary": {
             "sessions_available": len(session_ids),
@@ -310,11 +359,24 @@ def handle_share(args) -> None:
         )
         sys.exit(1)
 
-    projects, included, excluded_names, disabled_names = _project_scope(
+    projects, included, excluded_names, disabled_names, disconnected_names, scope_error = _project_scope(
         config=config,
         source_choice=source_choice,
         include_all_projects=bool(args.all_projects),
     )
+    if scope_error is not None:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "Project discovery failed.",
+                    "detail": scope_error,
+                    "source": source_choice,
+                },
+                indent=2,
+            )
+        )
+        sys.exit(1)
     if not projects:
         print(
             json.dumps(
@@ -336,7 +398,8 @@ def handle_share(args) -> None:
                     "error": "No projects left to export after exclusions/disabled filters.",
                     "excluded_projects": excluded_names,
                     "disabled_projects": disabled_names,
-                    "hint": "Run codeclaw config --confirm-projects or adjust --exclude/--enable-project.",
+                    "disconnected_projects": disconnected_names,
+                    "hint": "Run codeclaw projects or adjust --exclude/--enable-project settings.",
                 },
                 indent=2,
             )
@@ -354,7 +417,24 @@ def handle_share(args) -> None:
     )
     file_size = output_path.stat().st_size if output_path.exists() else 0
 
-    repo_id = args.repo or config.get("repo")
+    repo_input = args.repo if args.repo is not None else config.get("repo")
+    repo_id = normalize_repo_id(repo_input) if repo_input else None
+    if repo_input and repo_id is None:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "Invalid dataset repo format.",
+                    "provided": repo_input,
+                    "hint": (
+                        "Use username/dataset-name or a URL like "
+                        "https://huggingface.co/datasets/username/dataset-name"
+                    ),
+                },
+                indent=2,
+            )
+        )
+        sys.exit(1)
     hf_user = get_hf_username()
     if not repo_id and hf_user:
         repo_id = default_repo_name(hf_user)
@@ -396,8 +476,8 @@ def handle_share(args) -> None:
         dataset_url = f"https://huggingface.co/datasets/{repo_id}"
         published = True
 
-    if args.repo:
-        config["repo"] = args.repo
+    if repo_id:
+        config["repo"] = repo_id
     if source_explicit:
         config["source"] = source_choice
     if publish_attestation:

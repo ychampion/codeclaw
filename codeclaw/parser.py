@@ -28,7 +28,7 @@ _CODEX_PROJECT_INDEX: dict[str, list[Path]] = {}
 
 def _iter_jsonl(filepath: Path):
     """Yield parsed JSON objects from a JSONL file, skipping blank/malformed lines."""
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -54,23 +54,30 @@ def detect_current_project(cwd: str | None = None) -> dict | None:
             cwd = str(Path.cwd())
         except OSError:
             return None
-    cwd = cwd.rstrip("/")
+    cwd = cwd.rstrip("\\/")
     if not cwd:
         return None
-    dir_name = cwd.replace("/", "-")
-    project_path = PROJECTS_DIR / dir_name
-    if not project_path.is_dir():
-        return None
-    sessions = list(project_path.glob("*.jsonl"))
-    if not sessions:
-        return None
-    return {
-        "dir_name": dir_name,
-        "display_name": _build_project_name(dir_name),
-        "session_count": len(sessions),
-        "total_size_bytes": sum(f.stat().st_size for f in sessions),
-        "source": CLAUDE_SOURCE,
-    }
+    normalized_cwd = cwd.replace("\\", "/")
+    dir_name = normalized_cwd.replace("/", "-")
+    candidate_names = [dir_name]
+    if not dir_name.startswith("-"):
+        candidate_names.append(f"-{dir_name}")
+
+    for candidate in candidate_names:
+        project_path = PROJECTS_DIR / candidate
+        if not project_path.is_dir():
+            continue
+        sessions = list(project_path.glob("*.jsonl"))
+        if not sessions:
+            continue
+        return {
+            "dir_name": candidate,
+            "display_name": _build_project_name(candidate),
+            "session_count": len(sessions),
+            "total_size_bytes": sum(f.stat().st_size for f in sessions),
+            "source": CLAUDE_SOURCE,
+        }
+    return None
 
 
 def discover_projects() -> list[dict]:
@@ -656,31 +663,44 @@ def _build_project_name(dir_name: str) -> str:
               '-home-bob-project' -> 'project'
               'standalone' -> 'standalone'
     """
-    path = dir_name.replace("-", "/")
-    path = path.lstrip("/")
-    parts = path.split("/")
+    if dir_name == "":
+        return ""
+
+    segments = [segment for segment in dir_name.strip("-").split("-") if segment]
+    if not segments:
+        return "unknown"
+
     common_dirs = {"Documents", "Downloads", "Desktop"}
 
-    if len(parts) >= 2 and parts[0] == "Users":
-        if len(parts) >= 4 and parts[2] in common_dirs:
-            meaningful = parts[3:]
-        elif len(parts) >= 3 and parts[2] not in common_dirs:
-            meaningful = parts[2:]
-        else:
-            meaningful = []
-    elif len(parts) >= 2 and parts[0] == "home":
-        meaningful = parts[2:] if len(parts) > 2 else []
-    else:
-        meaningful = parts
+    start_idx = 0
+    if segments and segments[0].endswith(":"):
+        start_idx = 1
 
-    if meaningful:
-        segments = dir_name.lstrip("-").split("-")
-        prefix_parts = len(parts) - len(meaningful)
-        return "-".join(segments[prefix_parts:]) or dir_name
-    else:
-        if len(parts) >= 2 and parts[0] in ("Users", "home"):
-            if len(parts) == 2:
-                return "~home"
-            if len(parts) == 3 and parts[2] in common_dirs:
-                return f"~{parts[2]}"
-        return dir_name.strip("-") or "unknown"
+    def _join_from(index: int) -> str:
+        if index >= len(segments):
+            return "unknown"
+        return "-".join(segments[index:]) or "unknown"
+
+    if len(segments) > start_idx and segments[start_idx].lower() == "users":
+        user_idx = start_idx + 1
+        if len(segments) <= user_idx:
+            return "~home"
+        project_idx = user_idx + 1
+        if len(segments) > project_idx and segments[project_idx] in common_dirs:
+            project_idx += 1
+            if len(segments) == project_idx:
+                return f"~{segments[project_idx - 1]}"
+        if len(segments) <= project_idx:
+            return "~home"
+        return _join_from(project_idx)
+
+    if len(segments) > start_idx and segments[start_idx].lower() == "home":
+        user_idx = start_idx + 1
+        if len(segments) <= user_idx:
+            return "~home"
+        project_idx = user_idx + 1
+        if len(segments) <= project_idx:
+            return "~home"
+        return _join_from(project_idx)
+
+    return _join_from(start_idx)

@@ -1,6 +1,7 @@
 """Export-related commands: prep, export, confirm, list, and status."""
 
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -39,6 +40,7 @@ from ._helpers import (
     _source_label,
     default_repo_name,
     get_hf_username,
+    normalize_repo_id,
 )
 from .config import _get_disabled_projects, _is_dataset_globally_enabled
 
@@ -51,12 +53,14 @@ def list_projects(source_filter: str = "auto") -> None:
         return
     config = load_config()
     excluded = set(config.get("excluded_projects", []))
+    connected = set(config.get("connected_projects", []))
     current = detect_current_project()
     current_name = current["display_name"] if current else None
     print(json.dumps(
         [{"name": p["display_name"], "sessions": p["session_count"],
           "size": _format_size(p["total_size_bytes"]),
           "excluded": p["display_name"] in excluded,
+          "connected": p["display_name"] in connected if connected else True,
           "current": p["display_name"] == current_name,
           "source": p.get("source", "claude")}
          for p in projects],
@@ -86,7 +90,7 @@ def export_to_jsonl(
     sessions_by_project: dict[str, list[dict]] = defaultdict(list)
 
     try:
-        fh = open(output_path, "w")
+        fh = open(output_path, "w", encoding="utf-8")
     except OSError as e:
         print(f"Error: cannot write to {output_path}: {e}", file=sys.stderr)
         sys.exit(1)
@@ -173,7 +177,12 @@ def _read_sessions_from_jsonl(jsonl_path: Path) -> list[dict]:
     return sessions
 
 
-def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
+def push_to_huggingface(
+    jsonl_path: Path,
+    repo_id: str,
+    meta: dict,
+    private: bool | None = None,
+) -> None:
     """Push JSONL + metadata to HF dataset repo."""
     try:
         from huggingface_hub import HfApi
@@ -182,6 +191,7 @@ def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
         sys.exit(1)
 
     api = HfApi()
+    private_repo = bool(load_config().get("repo_private", True)) if private is None else bool(private)
 
     try:
         user_info = api.whoami()
@@ -193,7 +203,7 @@ def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
 
     print(f"Pushing to: {repo_id}")
     try:
-        api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
+        api.create_repo(repo_id, repo_type="dataset", private=private_repo, exist_ok=True)
 
         sessions = _read_sessions_from_jsonl(jsonl_path)
         uploaded_projects: set[str] = set()
@@ -624,7 +634,7 @@ def _scan_for_text_occurrences(
     matches = 0
     examples: list[dict[str, object]] = []
     try:
-        with open(file_path, errors="replace") as f:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
             for line_no, line in enumerate(f, start=1):
                 if pattern.search(line):
                     matches += 1
@@ -813,7 +823,7 @@ def confirm(
     models: dict[str, int] = {}
     total = 0
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -935,6 +945,7 @@ def prep(source_filter: str = "auto") -> None:
         sys.exit(1)
 
     excluded = set(config.get("excluded_projects", []))
+    connected = set(config.get("connected_projects", []))
 
     # Use _compute_stage to determine where we are
     stage, stage_number, hf_user = _compute_stage(config)
@@ -972,6 +983,7 @@ def prep(source_filter: str = "auto") -> None:
                 "sessions": p["session_count"],
                 "size": _format_size(p["total_size_bytes"]),
                 "excluded": p["display_name"] in excluded,
+                "connected": p["display_name"] in connected if connected else True,
                 "source": p.get("source", "claude"),
             }
             for p in projects
@@ -1143,7 +1155,26 @@ def _run_export(args) -> None:
     print(f"Source scope: {source_choice}")
 
     # Resolve repo — CLI flag > config > auto-detect from HF username
-    repo_id = args.repo or config.get("repo")
+    repo_input = args.repo if args.repo is not None else config.get("repo")
+    repo_id = normalize_repo_id(repo_input) if repo_input else None
+    if repo_input and repo_id is None:
+        print(
+            json.dumps(
+                {
+                    "error": "Invalid dataset repo format.",
+                    "provided": repo_input,
+                    "hint": (
+                        "Use username/dataset-name or a URL like "
+                        "https://huggingface.co/datasets/username/dataset-name"
+                    ),
+                },
+                indent=2,
+            )
+        )
+        sys.exit(1)
+    if args.repo and repo_id:
+        config["repo"] = repo_id
+        save_config(config)
     if not repo_id and not args.no_push:
         hf_user = get_hf_username()
         if hf_user:
@@ -1159,6 +1190,11 @@ def _run_export(args) -> None:
 
     included = [p for p in projects if p["display_name"] not in excluded]
     excluded_projects = [p for p in projects if p["display_name"] in excluded]
+    connected = set(config.get("connected_projects", []))
+    disconnected_projects: list[dict] = []
+    if connected and not args.all_projects:
+        disconnected_projects = [p for p in included if p["display_name"] not in connected]
+        included = [p for p in included if p["display_name"] in connected]
 
     if excluded_projects:
         print(f"\nIncluding {len(included)} projects (excluding {len(excluded_projects)}):")
@@ -1168,6 +1204,8 @@ def _run_export(args) -> None:
         print(f"  + {p['display_name']} ({p['session_count']} sessions)")
     for p in excluded_projects:
         print(f"  - {p['display_name']} (excluded)")
+    for p in disconnected_projects:
+        print(f"  - {p['display_name']} (not connected; use codeclaw projects --connect)")
 
     # Filter out disabled projects
     disabled = _get_disabled_projects(config)
@@ -1178,7 +1216,7 @@ def _run_export(args) -> None:
             print(f"  ⚠ {p['display_name']} — disabled by user (codeclaw config --enable-project \"{p['display_name']}\" to re-enable)")
 
     if not included:
-        print("\nNo projects to export. Run: codeclaw config --exclude ''")
+        print("\nNo projects to export. Run: codeclaw projects to configure connected scope.")
         sys.exit(1)
 
     # Build anonymizer with extra usernames from config
@@ -1279,6 +1317,13 @@ def _run_export(args) -> None:
 def _build_pii_commands(output_path: Path) -> list[str]:
     """Return grep commands for PII scanning."""
     p = str(output_path.resolve())
+    if os.name == "nt":
+        return [
+            f'Select-String -Path "{p}" -Pattern "[a-zA-Z0-9.+-]+@[a-zA-Z0-9.-]+\\.[a-z]{{2,}}" | Select-Object -First 20',
+            f'Select-String -Path "{p}" -Pattern "eyJ[A-Za-z0-9_-]{{20,}}" | Select-Object -First 5',
+            f'Select-String -Path "{p}" -Pattern "(ghp_|sk-|hf_)[A-Za-z0-9_-]{{10,}}" | Select-Object -First 5',
+            f'Select-String -Path "{p}" -Pattern "[0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}}"',
+        ]
     return [
         f"grep -oE '[a-zA-Z0-9.+-]+@[a-zA-Z0-9.-]+\\.[a-z]{{2,}}' {p} | grep -v noreply | head -20",
         f"grep -oE 'eyJ[A-Za-z0-9_-]{{20,}}' {p} | head -5",
@@ -1297,14 +1342,33 @@ def _print_pii_guidance(output_path: Path) -> None:
     print("You should scan the exported data for remaining PII.")
     print()
     print("Quick checks (run these and review any matches):")
-    print(f"  grep -i 'your_name' {abs_output}")
-    print(f"  grep -oE '[a-zA-Z0-9.+-]+@[a-zA-Z0-9.-]+\\.[a-z]{{2,}}' {abs_output} | grep -v noreply | head -20")
-    print(f"  grep -oE 'eyJ[A-Za-z0-9_-]{{20,}}' {abs_output} | head -5")
-    print(f"  grep -oE '(ghp_|sk-|hf_)[A-Za-z0-9_-]{{10,}}' {abs_output} | head -5")
-    print(f"  grep -oE '[0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}}' {abs_output} | sort -u")
+    if os.name == "nt":
+        print(f"  Select-String -Path \"{abs_output}\" -Pattern 'your_name' | Select-Object -First 10")
+        print(
+            f"  Select-String -Path \"{abs_output}\" -Pattern "
+            "\"[a-zA-Z0-9.+-]+@[a-zA-Z0-9.-]+\\.[a-z]{2,}\" | Select-Object -First 20"
+        )
+        print(f"  Select-String -Path \"{abs_output}\" -Pattern \"eyJ[A-Za-z0-9_-]{{20,}}\" | Select-Object -First 5")
+        print(
+            f"  Select-String -Path \"{abs_output}\" -Pattern "
+            "\"(ghp_|sk-|hf_)[A-Za-z0-9_-]{10,}\" | Select-Object -First 5"
+        )
+        print(
+            f"  Select-String -Path \"{abs_output}\" -Pattern "
+            "\"[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\""
+        )
+    else:
+        print(f"  grep -i 'your_name' {abs_output}")
+        print(f"  grep -oE '[a-zA-Z0-9.+-]+@[a-zA-Z0-9.-]+\\.[a-z]{{2,}}' {abs_output} | grep -v noreply | head -20")
+        print(f"  grep -oE 'eyJ[A-Za-z0-9_-]{{20,}}' {abs_output} | head -5")
+        print(f"  grep -oE '(ghp_|sk-|hf_)[A-Za-z0-9_-]{{10,}}' {abs_output} | head -5")
+        print(f"  grep -oE '[0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}}' {abs_output} | sort -u")
     print()
     print("NEXT: Ask for full name to run an exact-name privacy check, then scan for it:")
-    print(f"  grep -i 'THEIR_NAME' {abs_output} | head -10")
+    if os.name == "nt":
+        print(f"  Select-String -Path \"{abs_output}\" -Pattern \"THEIR_NAME\" | Select-Object -First 10")
+    else:
+        print(f"  grep -i 'THEIR_NAME' {abs_output} | head -10")
     print("  If user declines sharing full name: use codeclaw confirm --skip-full-name-scan with a skip attestation.")
     print()
     print("To add custom redactions, then re-export:")
