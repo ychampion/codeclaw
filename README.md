@@ -107,7 +107,7 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 | `codeclaw status` | Show current stage and next steps (JSON) |
 | `codeclaw prep` | Discover projects and auth state |
 | `codeclaw setup` | Guided onboarding (HF, dataset repo, projects, MCP, watcher) |
-| `codeclaw doctor` | Verify logs, HF auth, and MCP registration |
+| `codeclaw doctor` | Verify logs, HF auth, MCP registration, and runtime PATH/version diagnostics |
 | `codeclaw stats` | Show session, token, redaction, and export metrics |
 | `codeclaw stats --skill` | Include trajectory-based growth metrics |
 | `codeclaw diff` | Preview exactly what would be redacted before confirm |
@@ -182,6 +182,9 @@ Inside the TUI:
 /help
 /status
 /watch on
+/logs 80
+/projects
+/scope codex:codeclaw
 /export --dry-run
 /jobs
 /plugins list

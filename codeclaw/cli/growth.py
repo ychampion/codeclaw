@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 import signal
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from ..anonymizer import Anonymizer
 from ..classifier import classify_trajectory
 from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
@@ -33,6 +35,36 @@ from .export import (
     export_to_jsonl,
     push_to_huggingface,
 )
+
+
+def _runtime_diagnostics() -> dict[str, Any]:
+    python_path = Path(sys.executable).resolve()
+    command_path_raw = shutil.which("codeclaw")
+    command_path = Path(command_path_raw).resolve() if command_path_raw else None
+    candidate_script_dirs = {python_path.parent}
+    scripts_dir = python_path.parent / "Scripts"
+    if scripts_dir.exists():
+        candidate_script_dirs.add(scripts_dir)
+
+    command_in_python_env = None
+    if command_path is not None:
+        command_in_python_env = any(
+            command_path == directory or directory in command_path.parents
+            for directory in candidate_script_dirs
+        )
+
+    return {
+        "module_version": __version__,
+        "python_executable": str(python_path),
+        "codeclaw_on_path": str(command_path) if command_path is not None else None,
+        "codeclaw_on_path_in_python_env": command_in_python_env,
+        "path_hint": (
+            "Command resolution may point to a different Python install. "
+            "Use `python -m codeclaw --version` and compare with `codeclaw --version`."
+            if command_path is not None and command_in_python_env is False
+            else None
+        ),
+    }
 
 
 def _check_mcp_registration() -> dict[str, Any]:
@@ -183,6 +215,7 @@ def handle_doctor(args) -> None:
     mcp = _check_mcp_registration()
     encryption = encryption_status(config)
     adapters = adapter_diagnostics()
+    runtime = _runtime_diagnostics()
     from ..daemon import daemon_status
     watch = daemon_status()
     connected = set(config.get("connected_projects", []))
@@ -271,6 +304,9 @@ def handle_doctor(args) -> None:
         next_steps.append("Run: codeclaw watch --start (or keep manual mode without background sync).")
     if not checks["project_discovery"]["ok"] and checks["session_sources"]["ok"]:
         next_steps.append("Run: codeclaw prep to inspect source scope and project detection.")
+    if runtime.get("path_hint"):
+        next_steps.append("Run: python -m codeclaw --version and compare with `codeclaw --version`.")
+        next_steps.append("If versions differ, reinstall with: python -m pip install --upgrade --force-reinstall codeclaw")
 
     payload = {
         "ok": ok,
@@ -282,6 +318,7 @@ def handle_doctor(args) -> None:
             "sigusr1_available": hasattr(signal, "SIGUSR1"),
             "adapter_diagnostics": adapters,
         },
+        "runtime": runtime,
         "next_steps": next_steps,
     }
     print(json.dumps(payload, indent=2))

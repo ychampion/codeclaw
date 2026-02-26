@@ -26,8 +26,15 @@ from prompt_toolkit.widgets import TextArea
 
 from ..cli.export import _run_export
 from ..config import load_config, save_config
-from ..daemon import daemon_status, set_watch_paused, start_daemon, stop_daemon, trigger_sync_now
-from ..parser import detect_current_project
+from ..daemon import (
+    daemon_status,
+    read_recent_logs,
+    set_watch_paused,
+    start_daemon,
+    stop_daemon,
+    trigger_sync_now,
+)
+from ..parser import detect_current_project, discover_projects
 from .commands import CommandRegistry
 from .jobs import JobContext, JobManager
 from .plugins import PluginManager
@@ -52,7 +59,13 @@ class CodeClawTuiApp:
 
     SPINNER_FRAMES = ("|", "/", "-", "\\")
 
-    def __init__(self, source: str = "auto", plugin_dirs: list[Path] | None = None) -> None:
+    def __init__(
+        self,
+        source: str = "auto",
+        plugin_dirs: list[Path] | None = None,
+        pt_output=None,
+        pt_input=None,
+    ) -> None:
         self.source = source
         self.mode = "idle"
         self.last_result = "ready"
@@ -110,6 +123,8 @@ class CodeClawTuiApp:
             mouse_support=True,
             refresh_interval=0.2,
             style=self.style,
+            output=pt_output,
+            input=pt_input,
         )
 
         self._register_builtin_commands()
@@ -154,7 +169,7 @@ class CodeClawTuiApp:
             self.emit_feed(line, level="info")
         self.emit_feed("CodeClaw TUI ready", level="success")
         self.emit_feed(f"platform={sys.platform} source={self.source}", level="info")
-        self.emit_feed("Try: /help  /status  /watch status  /jobs", level="info")
+        self.emit_feed("Try: /help  /status  /watch status  /logs  /projects  /scope", level="info")
 
     def _refresh_feed_text(self) -> None:
         self.feed.text = "\n".join(self.feed_lines[-1000:])
@@ -319,6 +334,30 @@ class CodeClawTuiApp:
         )
         self.registry.register(
             SlashCommand(
+                name="logs",
+                help_text="Show watcher daemon logs",
+                usage="/logs [lines]",
+                handler=self._cmd_logs,
+            )
+        )
+        self.registry.register(
+            SlashCommand(
+                name="projects",
+                help_text="List projects for current source filter",
+                usage="/projects",
+                handler=self._cmd_projects,
+            )
+        )
+        self.registry.register(
+            SlashCommand(
+                name="scope",
+                help_text="Set connected project scope",
+                usage="/scope <index|name|all>",
+                handler=self._cmd_scope,
+            )
+        )
+        self.registry.register(
+            SlashCommand(
                 name="jobs",
                 help_text="List active and completed background jobs",
                 usage="/jobs",
@@ -448,6 +487,75 @@ class CodeClawTuiApp:
             self._watch_paused = bool(payload.get("paused", False))
             return CommandResult(bool(payload.get("ok", True)), "watch resumed")
         return CommandResult(False, f"Unknown watch action: {action}")
+
+    def _cmd_logs(self, _ctx, args: list[str]) -> CommandResult:
+        count = 40
+        if args:
+            if len(args) != 1 or not args[0].isdigit():
+                return CommandResult(False, "Usage: /logs [lines]")
+            count = max(1, min(int(args[0]), 500))
+        lines = read_recent_logs(lines=count)
+        if not lines:
+            self.emit_feed("(no daemon logs yet)", level="info")
+            return CommandResult(True, "no logs yet")
+        self.emit_feed("\n".join(lines), level="info")
+        return CommandResult(True, f"logs shown ({len(lines)} lines)")
+
+    def _available_project_names(self) -> list[str]:
+        names: set[str] = set()
+        for project in discover_projects():
+            source = str(project.get("source", "claude"))
+            if self.source not in {"auto", "both"} and source != self.source:
+                continue
+            name = str(project.get("display_name", "")).strip()
+            if name:
+                names.add(name)
+        return sorted(names)
+
+    def _cmd_projects(self, _ctx, _args: list[str]) -> CommandResult:
+        available = self._available_project_names()
+        cfg = load_config()
+        payload = {
+            "source": self.source,
+            "available": available,
+            "connected": cfg.get("connected_projects", []),
+        }
+        self.emit_feed(json.dumps(payload, indent=2), level="info")
+        return CommandResult(True, f"projects listed ({len(available)})")
+
+    def _cmd_scope(self, _ctx, args: list[str]) -> CommandResult:
+        if not args:
+            cfg = load_config()
+            connected = cfg.get("connected_projects", [])
+            label = ", ".join(connected) if connected else "all discovered projects"
+            return CommandResult(True, f"current scope: {label}")
+
+        available = self._available_project_names()
+        if not available:
+            return CommandResult(False, "No projects discovered for current source.")
+
+        token = " ".join(args).strip()
+        connected: list[str]
+        if token.lower() in {"all", "clear", "*"}:
+            connected = []
+        elif token.isdigit() and 1 <= int(token) <= len(available):
+            connected = [available[int(token) - 1]]
+        elif token in available:
+            connected = [token]
+        else:
+            return CommandResult(
+                False,
+                f"Project not found: {token}. Use /projects, then /scope <index|name|all>.",
+            )
+
+        cfg = load_config()
+        cfg["connected_projects"] = connected
+        cfg["projects_confirmed"] = True
+        if self.source in {"claude", "codex", "both"}:
+            cfg["source"] = self.source
+        save_config(cfg)
+        scope_label = ", ".join(connected) if connected else "all discovered projects"
+        return CommandResult(True, f"scope updated: {scope_label}")
 
     def _cmd_jobs(self, _ctx, _args: list[str]) -> CommandResult:
         jobs = [job.__dict__ for job in self.jobs.list_jobs()]

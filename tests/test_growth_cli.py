@@ -66,6 +66,8 @@ def test_doctor_reports_failed_checks(monkeypatch, tmp_path, capsys):
     assert payload["ok"] is False
     assert payload["checks"]["huggingface_auth"]["ok"] is False
     assert payload["checks"]["mcp_registration"]["ok"] is False
+    assert "runtime" in payload
+    assert payload["runtime"]["module_version"]
 
 
 def test_doctor_passes_when_setup_is_ready(monkeypatch, tmp_path, capsys):
@@ -103,6 +105,38 @@ def test_doctor_passes_when_setup_is_ready(monkeypatch, tmp_path, capsys):
     payload = _extract_json(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["checks"]["project_discovery"]["project_count"] == 1
+    assert payload["runtime"]["module_version"]
+
+
+def test_doctor_path_mismatch_adds_next_steps(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    cfg_file = tmp_path / ".codeclaw" / "config.json"
+    cfg_file.parent.mkdir(parents=True, exist_ok=True)
+    cfg_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(growth, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(growth, "load_config", lambda: {})
+    monkeypatch.setattr(growth, "_has_session_sources", lambda _source: True)
+    monkeypatch.setattr(growth, "discover_projects", lambda: [])
+    monkeypatch.setattr(growth, "get_hf_username", lambda: "alice")
+    monkeypatch.setattr(
+        growth,
+        "_runtime_diagnostics",
+        lambda: {
+            "module_version": "0.4.4",
+            "python_executable": str(tmp_path / "python.exe"),
+            "codeclaw_on_path": str(tmp_path / "other" / "codeclaw.exe"),
+            "codeclaw_on_path_in_python_env": False,
+            "path_hint": "mismatch",
+        },
+    )
+
+    with pytest.raises(SystemExit):
+        growth.handle_doctor(argparse.Namespace(source="auto"))
+
+    payload = _extract_json(capsys.readouterr().out)
+    assert payload["runtime"]["path_hint"] == "mismatch"
+    steps = payload["next_steps"]
+    assert any("python -m codeclaw --version" in step for step in steps)
 
 
 def test_stats_aggregates_session_and_lifetime_metrics(monkeypatch, capsys):
