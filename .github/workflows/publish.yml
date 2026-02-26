@@ -64,29 +64,44 @@ jobs:
   publish-secondary-index:
     needs: build-check
     runs-on: ubuntu-latest
-    if: >-
-      ${{
-        secrets.SECONDARY_PYPI_REPOSITORY_URL != '' &&
-        secrets.SECONDARY_PYPI_USERNAME != '' &&
-        secrets.SECONDARY_PYPI_PASSWORD != ''
-      }}
     permissions:
       contents: read
+    env:
+      SECONDARY_PYPI_REPOSITORY_URL: ${{ secrets.SECONDARY_PYPI_REPOSITORY_URL }}
+      SECONDARY_PYPI_USERNAME: ${{ secrets.SECONDARY_PYPI_USERNAME }}
+      SECONDARY_PYPI_PASSWORD: ${{ secrets.SECONDARY_PYPI_PASSWORD }}
     steps:
+      - name: Check secondary index configuration
+        id: secondary-index
+        shell: bash
+        run: |
+          if [[ -n "${SECONDARY_PYPI_REPOSITORY_URL}" && -n "${SECONDARY_PYPI_USERNAME}" && -n "${SECONDARY_PYPI_PASSWORD}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+            echo "Secondary index upload enabled."
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "Secondary index secrets missing; skipping upload."
+          fi
       - uses: actions/checkout@v4
+        if: steps.secondary-index.outputs.enabled == 'true'
       - uses: actions/setup-python@v5
+        if: steps.secondary-index.outputs.enabled == 'true'
         with:
           python-version: "3.12"
-      - run: pip install build twine
-      - run: python -m build
-      - run: python -m twine check dist/*
+      - if: steps.secondary-index.outputs.enabled == 'true'
+        run: pip install build twine
+      - if: steps.secondary-index.outputs.enabled == 'true'
+        run: python -m build
+      - if: steps.secondary-index.outputs.enabled == 'true'
+        run: python -m twine check dist/*
       - name: Publish to secondary PyPI-compatible index
+        if: steps.secondary-index.outputs.enabled == 'true'
         env:
-          TWINE_USERNAME: ${{ secrets.SECONDARY_PYPI_USERNAME }}
-          TWINE_PASSWORD: ${{ secrets.SECONDARY_PYPI_PASSWORD }}
+          TWINE_USERNAME: ${{ env.SECONDARY_PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ env.SECONDARY_PYPI_PASSWORD }}
         run: |
           python -m twine upload \
-            --repository-url ${{ secrets.SECONDARY_PYPI_REPOSITORY_URL }} \
+            --repository-url ${{ env.SECONDARY_PYPI_REPOSITORY_URL }} \
             dist/*
 
   release-assets:
