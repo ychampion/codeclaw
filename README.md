@@ -1,4 +1,4 @@
-# CodeClaw
+# CodeClaw (Built for Agents)
 
 CodeClaw exports Claude Code and Codex sessions into privacy-safe training datasets, with gated publish controls, automated sync workflows, and optional MCP memory tooling.
 
