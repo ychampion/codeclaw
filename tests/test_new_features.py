@@ -45,6 +45,18 @@ def test_main_console_dispatch(monkeypatch):
     assert called["console"] is True
 
 
+def test_main_tui_dispatch(monkeypatch):
+    called = {"tui": False}
+
+    def _fake_tui(_args):
+        called["tui"] = True
+
+    monkeypatch.setattr(codeclaw_cli, "handle_tui", _fake_tui)
+    monkeypatch.setattr(sys, "argv", ["codeclaw", "tui"])
+    codeclaw_cli.main()
+    assert called["tui"] is True
+
+
 def test_finetune_requires_experimental(capsys):
     with pytest.raises(SystemExit):
         finetune.handle_finetune(argparse.Namespace(experimental=False, dataset=None, output=None))

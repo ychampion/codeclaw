@@ -76,6 +76,7 @@ def test_readme_command_table_uses_implemented_subcommands():
         "stats",
         "share",
         "console",
+        "tui",
         "projects",
         "update-skill",
         "synthesize",

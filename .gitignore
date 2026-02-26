@@ -13,3 +13,6 @@ findings.json
 
 # Local tooling state
 .desloppify/
+.venv_security_scan/
+.tmp-*.json
+.tmp-*.txt

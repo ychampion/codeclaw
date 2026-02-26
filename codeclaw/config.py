@@ -43,6 +43,7 @@ class CodeClawConfig(TypedDict, total=False):
     publish_attestation: str | None
     dataset_enabled: bool
     disabled_projects: list[str]
+    disabled_plugins: list[str]
     stats_total_exports: int
     stats_total_publishes: int
     stats_total_exported_sessions: int
@@ -73,6 +74,7 @@ DEFAULT_CONFIG: CodeClawConfig = {
     "synced_session_ids": [],
     "dataset_enabled": True,
     "disabled_projects": [],
+    "disabled_plugins": [],
     "watch_interval_seconds": 60,
     "watch_paused": False,
     "min_sessions_before_push": 5,

@@ -27,6 +27,7 @@ dependencies = [
     "huggingface_hub>=0.20.0",
     "cryptography>=42.0.0",
     "keyring>=24.0.0",
+    "prompt_toolkit>=3.0.39",
 ]
 
 [project.urls]

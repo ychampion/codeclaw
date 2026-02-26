@@ -91,6 +91,7 @@ codeclaw watch --pause                     # Pause watcher without stopping proc
 codeclaw watch --resume                    # Resume watcher polling
 codeclaw watch --switch-project "project"  # Scope watcher to one connected project
 codeclaw console --source both             # Open interactive slash-command console
+codeclaw tui --source both                 # Open full-screen TUI mode
 codeclaw update-skill claude               # Install/update the codeclaw skill for Claude Code
 ```
 

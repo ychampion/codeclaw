@@ -106,6 +106,7 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 | `codeclaw watch --switch-project "<name>"` | Quickly scope watcher to one project |
 | `codeclaw watch --set-projects "a,b"` | Set connected project scope directly |
 | `codeclaw console` | Interactive slash-command terminal (`/status`, `/logs`, `/scope`, `/run`) |
+| `codeclaw tui` | Full-screen TUI with activity feed, slash commands, jobs, and plugins |
 | `codeclaw serve` | Start MCP server over stdio |
 | `codeclaw install-mcp` | Register MCP server in Claude config |
 | `codeclaw synthesize --project <name>` | Generate `CODECLAW.md` from synced sessions |
@@ -140,6 +141,56 @@ codeclaw console --source codex
 /scope codex:codeclaw
 /logs 80
 /run export --no-push
+```
+
+Full-screen TUI mode:
+
+```bash
+codeclaw tui --source both
+```
+
+Inside the TUI:
+
+```text
+/help
+/status
+/watch on
+/export --dry-run
+/jobs
+/plugins list
+```
+
+Minimal local plugin example (`./plugins/echo`):
+
+```text
+plugins/
+  echo/
+    plugin.json
+    plugin.py
+```
+
+`plugin.json`:
+
+```json
+{
+  "name": "echo",
+  "version": "0.1.0",
+  "entrypoint": "plugin.py",
+  "description": "Simple echo command"
+}
+```
+
+`plugin.py`:
+
+```python
+from codeclaw.tui.types import CommandResult
+
+
+def register(ctx):
+    def _echo(_app, args):
+        return CommandResult(ok=True, message=" ".join(args) if args else "echo")
+
+    ctx.register_command("echo", _echo, "Echo input text", usage="/echo <text>")
 ```
 
 ## MCP Memory Server

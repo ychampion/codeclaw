@@ -27,6 +27,7 @@ from .mcp import handle_install_mcp, handle_serve
 from .finetune import handle_finetune
 from .projects import handle_projects
 from .setup import handle_setup
+from .tui import handle_tui
 from .update import _handle_synthesize, update_skill
 from .watch import _handle_watch
 
@@ -167,6 +168,7 @@ def main() -> None:
         "share": handle_share,
         "finetune": _handle_finetune,
         "console": handle_console,
+        "tui": handle_tui,
         "export": _run_export,
     }
 
@@ -319,6 +321,15 @@ def main() -> None:
 
     console = sub.add_parser("console", help="Interactive slash-command console")
     console.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+
+    tui = sub.add_parser("tui", help="Full-screen terminal UI with slash commands and plugins")
+    tui.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    tui.add_argument(
+        "--plugin-dir",
+        action="append",
+        default=[],
+        help="Additional plugin directory (repeatable)",
+    )
 
     exp = sub.add_parser("export", help="Export and push (default)")
     # Export flags on both the subcommand and root parser so `codeclaw --no-push` works
