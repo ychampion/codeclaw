@@ -51,6 +51,9 @@ def test_setup_yes_starts_watcher_and_sets_connected_current(monkeypatch, capsys
     assert payload["projects"]["connected"] == ["proj-b"]
     assert saved["connected_projects"] == ["proj-b"]
     assert saved["source"] == "both"
+    assert payload["hf"]["auth_detected"] is True
+    assert payload["hf"]["auth_source"] == "existing_session"
+    assert payload["hf"]["requires_login_for_publish"] is False
 
 
 def test_projects_connect_and_disconnect(monkeypatch, capsys):

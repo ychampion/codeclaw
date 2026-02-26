@@ -201,20 +201,41 @@ def handle_setup(args) -> None:
             default_source = configured if configured in EXPLICIT_SOURCE_CHOICES else "both"
             source_choice = _prompt_source(default_source)
 
-    hf_username = get_hf_username()
+    hf_initial_username = get_hf_username()
+    hf_username = hf_initial_username
+    hf_auth_source = "existing_session" if hf_initial_username else "none"
     hf_login_attempted = False
     hf_login_message = None
-    if not hf_username and not args.yes:
-        print("Hugging Face login helps create/publish datasets.")
-        print("Create token: https://huggingface.co/settings/tokens")
-        token = getpass.getpass("Paste Hugging Face token now (blank to skip): ").strip()
-        if token:
-            hf_login_attempted = True
-            ok, detail = _attempt_hf_login(token)
-            hf_username = get_hf_username()
-            hf_login_message = detail
-            if not ok and detail:
-                print(f"Login warning: {detail}", file=sys.stderr)
+    hf_token_prompted = False
+    if not args.yes:
+        if hf_initial_username:
+            print(f"Detected existing Hugging Face login: {hf_initial_username}")
+            print("Setup will use this local session for dataset operations.")
+            if _prompt_yes_no("Re-authenticate with a new token?", default=False):
+                hf_token_prompted = True
+                print("Create token: https://huggingface.co/settings/tokens")
+                token = getpass.getpass("Paste Hugging Face token now (blank to keep current login): ").strip()
+                if token:
+                    hf_login_attempted = True
+                    ok, detail = _attempt_hf_login(token)
+                    hf_username = get_hf_username()
+                    hf_login_message = detail
+                    hf_auth_source = "interactive_token" if ok and hf_username else "existing_session"
+                    if not ok and detail:
+                        print(f"Login warning: {detail}", file=sys.stderr)
+        else:
+            print("Hugging Face login helps create/publish datasets.")
+            print("Create token: https://huggingface.co/settings/tokens")
+            hf_token_prompted = True
+            token = getpass.getpass("Paste Hugging Face token now (blank to skip): ").strip()
+            if token:
+                hf_login_attempted = True
+                ok, detail = _attempt_hf_login(token)
+                hf_username = get_hf_username()
+                hf_login_message = detail
+                hf_auth_source = "interactive_token" if ok and hf_username else "none"
+                if not ok and detail:
+                    print(f"Login warning: {detail}", file=sys.stderr)
 
     repo_input = getattr(args, "repo", None)
     repo_from_arg = normalize_repo_id(repo_input) if repo_input is not None else None
@@ -318,6 +339,10 @@ def handle_setup(args) -> None:
         "source": source_choice,
         "hf": {
             "username": hf_username,
+            "auth_detected": bool(hf_initial_username),
+            "auth_source": hf_auth_source,
+            "token_prompted": hf_token_prompted,
+            "requires_login_for_publish": hf_username is None,
             "login_attempted": hf_login_attempted,
             "message": hf_login_message,
             "token_url": "https://huggingface.co/settings/tokens",
