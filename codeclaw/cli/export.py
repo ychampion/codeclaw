@@ -15,7 +15,7 @@ from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
 from ..parser import CLAUDE_DIR, CODEX_DIR, detect_current_project, discover_projects, parse_project_sessions
 from ..redactor import RedactionEngine, redact_session_with_findings
 from ..secrets import _has_mixed_char_types, _shannon_entropy
-from ..storage import is_encrypted_text, maybe_encrypt_file, read_jsonl, read_text
+from ..storage import EncryptionError, is_encrypted_text, maybe_encrypt_file, read_jsonl, read_text
 
 from ._helpers import (
     CONFIRM_COMMAND_EXAMPLE,
@@ -186,7 +186,7 @@ def _list_project_configs(files: list[str]) -> list[str]:
 
 
 def _read_sessions_from_jsonl(jsonl_path: Path) -> list[dict]:
-    return read_jsonl(jsonl_path, config=load_config())
+    return read_jsonl(jsonl_path, config=load_config(), strict=True)
 
 
 def push_to_huggingface(
@@ -307,6 +307,13 @@ def push_to_huggingface(
         )
     except (OSError, ValueError) as e:
         print(f"Error uploading to Hugging Face: {e}", file=sys.stderr)
+        sys.exit(1)
+    except EncryptionError as e:
+        print(f"Error reading encrypted export file: {e}", file=sys.stderr)
+        print(
+            "Run `codeclaw doctor` to verify encryption setup, then re-run export/confirm to regenerate a readable file.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except json.JSONDecodeError as e:
         print(f"Error reading {jsonl_path}: {e}", file=sys.stderr)
@@ -674,9 +681,11 @@ def _scan_pii(file_path: Path) -> dict:
 
     results = {}
     try:
-        content = read_text(file_path, config=load_config())
+        content = read_text(file_path, config=load_config(), strict=True)
     except OSError:
         return {}
+    except EncryptionError as e:
+        return {"error": str(e), "hint": "Run `codeclaw doctor` and ensure the encryption key is available."}
 
     for name, pattern in scans.items():
         matches = set(re.findall(pattern, content))
@@ -732,7 +741,7 @@ def _scan_for_text_occurrences(
     matches = 0
     examples: list[dict[str, object]] = []
     try:
-        content = read_text(file_path, config=load_config())
+        content = read_text(file_path, config=load_config(), strict=True)
         for line_no, line in enumerate(content.splitlines(), start=1):
             if pattern.search(line):
                 matches += 1
@@ -747,6 +756,14 @@ def _scan_for_text_occurrences(
             "match_count": 0,
             "examples": [],
             "error": str(e),
+        }
+    except EncryptionError as e:
+        return {
+            "query": query,
+            "match_count": 0,
+            "examples": [],
+            "error": str(e),
+            "hint": "Run `codeclaw doctor` and verify encryption is healthy before confirm.",
         }
     return {
         "query": query,
@@ -915,6 +932,15 @@ def confirm(
         }
     else:
         full_name_scan = _scan_for_text_occurrences(file_path, normalized_full_name)
+        if full_name_scan.get("error"):
+            print(json.dumps({
+                "error": "Unable to run full-name scan on export file.",
+                "details": full_name_scan,
+                "blocked_on_step": "Step 2/3",
+                "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
+                "next_command": "codeclaw doctor",
+            }, indent=2))
+            sys.exit(1)
 
     # Read and summarize
     projects: dict[str, int] = {}
@@ -927,7 +953,7 @@ def confirm(
             projects[proj] = projects.get(proj, 0) + 1
             model = row.get("model", "<unknown>")
             models[model] = models.get(model, 0) + 1
-    except (OSError, json.JSONDecodeError) as e:
+    except (OSError, json.JSONDecodeError, EncryptionError) as e:
         print(json.dumps({"error": f"Cannot read {file_path}: {e}"}))
         sys.exit(1)
 
@@ -1411,7 +1437,10 @@ def _run_export(args) -> None:
 def _build_pii_commands(output_path: Path) -> list[str]:
     """Return grep commands for PII scanning."""
     p = str(output_path.resolve())
-    encrypted = is_encrypted_text(read_text(output_path, config=load_config()))
+    try:
+        encrypted = is_encrypted_text(read_text(output_path, config=load_config(), strict=False))
+    except OSError:
+        encrypted = False
     if encrypted:
         return [
             "codeclaw diff --format json",
@@ -1435,7 +1464,10 @@ def _build_pii_commands(output_path: Path) -> list[str]:
 def _print_pii_guidance(output_path: Path) -> None:
     """Print PII review guidance with concrete grep commands."""
     abs_output = output_path.resolve()
-    encrypted = is_encrypted_text(read_text(output_path, config=load_config()))
+    try:
+        encrypted = is_encrypted_text(read_text(output_path, config=load_config(), strict=False))
+    except OSError:
+        encrypted = False
     print(f"\n{'=' * 50}")
     print("  IMPORTANT: Review your data before publishing!")
     print(f"{'=' * 50}")

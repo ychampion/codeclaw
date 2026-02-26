@@ -16,6 +16,10 @@ _LOCAL_KEY_FILE = Path.home() / ".codeclaw" / "encryption.key"
 _KEYRING_SERVICE = "codeclaw"
 
 
+class EncryptionError(RuntimeError):
+    """Raised when encrypted content cannot be decrypted."""
+
+
 def _load_crypto():
     try:
         from cryptography.fernet import Fernet
@@ -146,20 +150,30 @@ def encrypt_text(plain: str, config: CodeClawConfig | None = None) -> str:
     return f"{_ENC_PREFIX}{token}"
 
 
-def decrypt_text(payload: str, config: CodeClawConfig | None = None) -> str:
+def decrypt_text(
+    payload: str,
+    config: CodeClawConfig | None = None,
+    strict: bool = False,
+) -> str:
     if not is_encrypted_text(payload):
         return payload
     crypto = _load_crypto()
     if crypto is None:
+        if strict:
+            raise EncryptionError("Encrypted content detected but 'cryptography' is unavailable.")
         return payload
     raw_key = _resolve_raw_key(config)
     if not raw_key:
+        if strict:
+            raise EncryptionError("Encrypted content detected but no encryption key is available.")
         return payload
     token = payload[len(_ENC_PREFIX):]
     try:
         fernet = crypto(_to_fernet_key(raw_key))
         return fernet.decrypt(token.encode("utf-8")).decode("utf-8", errors="replace")
     except Exception:
+        if strict:
+            raise EncryptionError("Encrypted content could not be decrypted with the current key.")
         return payload
 
 
@@ -171,7 +185,7 @@ def maybe_encrypt_file(path: Path, config: CodeClawConfig | None = None) -> bool
         return False
     if not cfg.get("encryption_key_ref"):
         return False
-    payload = read_text(path, config=cfg)
+    payload = read_text(path, config=cfg, strict=False)
     if is_encrypted_text(payload):
         return True
     encrypted = encrypt_text(payload, config=cfg)
@@ -189,13 +203,21 @@ def write_text(path: Path, text: str) -> None:
             path.chmod(0o600)
 
 
-def read_text(path: Path, config: CodeClawConfig | None = None) -> str:
+def read_text(
+    path: Path,
+    config: CodeClawConfig | None = None,
+    strict: bool = False,
+) -> str:
     raw = path.read_text(encoding="utf-8", errors="replace")
-    return decrypt_text(raw, config=config)
+    return decrypt_text(raw, config=config, strict=strict)
 
 
-def read_jsonl(path: Path, config: CodeClawConfig | None = None) -> list[dict[str, Any]]:
-    text = read_text(path, config=config)
+def read_jsonl(
+    path: Path,
+    config: CodeClawConfig | None = None,
+    strict: bool = False,
+) -> list[dict[str, Any]]:
+    text = read_text(path, config=config, strict=strict)
     rows: list[dict[str, Any]] = []
     for line in text.splitlines():
         line = line.strip()

@@ -10,7 +10,8 @@ from codeclaw import cli as codeclaw_cli
 from codeclaw import source_adapters
 from codeclaw.cli import finetune, growth
 from codeclaw.cli import push_to_huggingface
-from codeclaw.storage import decrypt_text, encrypt_text
+from codeclaw.cli import export as export_cli
+from codeclaw.storage import EncryptionError, decrypt_text, encrypt_text
 
 
 def _extract_json(stdout: str) -> dict:
@@ -158,3 +159,49 @@ def test_push_to_hf_writes_version_manifest(monkeypatch, tmp_path):
     assert "versions/latest.json" in uploaded_paths
     assert saved.get("dataset_latest_version")
     assert saved.get("published_dedupe_index")
+
+
+def test_scan_for_text_occurrences_reports_encryption_error(monkeypatch, tmp_path):
+    file_path = tmp_path / "export.jsonl"
+    file_path.write_text("CODECLAW_ENCRYPTED_V1:abc", encoding="utf-8")
+
+    monkeypatch.setattr(
+        export_cli,
+        "read_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(EncryptionError("bad key")),
+    )
+    payload = export_cli._scan_for_text_occurrences(file_path, "alice")
+    assert payload["match_count"] == 0
+    assert payload["error"] == "bad key"
+    assert "doctor" in payload["hint"].lower()
+
+
+def test_push_to_hf_exits_on_encryption_error(monkeypatch, tmp_path, capsys):
+    jsonl_path = tmp_path / "data.jsonl"
+    jsonl_path.write_text("CODECLAW_ENCRYPTED_V1:abc", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "codeclaw.cli.export.load_config",
+        lambda: {"repo_private": True, "published_dedupe_index": {}, "synced_session_ids": []},
+    )
+
+    mock_api = MagicMock()
+    mock_api.whoami.return_value = {"name": "alice"}
+    mock_hf_module = MagicMock()
+    mock_hf_module.HfApi.return_value = mock_api
+
+    monkeypatch.setattr(
+        "codeclaw.cli.export._read_sessions_from_jsonl",
+        lambda _path: (_ for _ in ()).throw(EncryptionError("missing key")),
+    )
+
+    with patch.dict("sys.modules", {"huggingface_hub": mock_hf_module}):
+        with pytest.raises(SystemExit):
+            push_to_huggingface(
+                jsonl_path,
+                "alice/repo",
+                {"exported_session_ids": [], "sessions": 0, "projects": [], "redactions": 0},
+            )
+
+    captured = capsys.readouterr()
+    assert "Error reading encrypted export file" in captured.err
