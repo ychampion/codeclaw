@@ -1,10 +1,24 @@
-# CodeClaw (Built for Agents)
+# CodeClaw
 
-CodeClaw exports Claude Code and Codex sessions into privacy-safe training datasets, with gated publish controls, automated sync workflows, and optional MCP memory tooling.
+CodeClaw converts Claude Code and Codex sessions into privacy-safe training datasets with review gates, background sync, and MCP memory retrieval.
 
 [![Tests](https://github.com/ychampion/codeclaw/actions/workflows/test.yml/badge.svg)](https://github.com/ychampion/codeclaw/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/codeclaw)](https://pypi.org/project/codeclaw/)
 [![Release](https://img.shields.io/github/v/release/ychampion/codeclaw)](https://github.com/ychampion/codeclaw/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/pypi/pyversions/codeclaw)](https://pypi.org/project/codeclaw/)
+
+## TL;DR
+
+- Run `codeclaw setup` once.
+- Run `codeclaw export --no-push` to produce a local reviewed dataset.
+- Run `codeclaw confirm ...` to pass review gates.
+- Run `codeclaw export --publish-attestation "..."` only after explicit approval.
+
+## Default UX
+
+- Running plain `codeclaw` opens the full-screen TUI.
+- Running `codeclaw export ...` keeps the scripted CLI flow.
 
 ## Why CodeClaw
 
@@ -109,12 +123,9 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 | `codeclaw tui` | Full-screen TUI with activity feed, slash commands, jobs, and plugins |
 | `codeclaw serve` | Start MCP server over stdio |
 | `codeclaw install-mcp` | Register MCP server in Claude config |
+| `codeclaw finetune --experimental` | Preview fine-tune scaffold for local experimentation |
 | `codeclaw synthesize --project <name>` | Generate `CODECLAW.md` from synced sessions |
 | `codeclaw update-skill claude` | Install/update local CodeClaw skill |
-
-Experimental preview command:
-
-- `codeclaw finetune --experimental`
 
 Additional source filters are available for adapter-backed ingestion:
 
@@ -237,6 +248,15 @@ pip install codeclaw \
   --index-url https://pypi.pkg.github.com/ychampion/simple/ \
   --extra-index-url https://pypi.org/simple
 ```
+
+## README Sync Policy
+
+README command docs are enforced in CI:
+
+- `tests/test_docs_consistency.py` validates command naming and branding markers.
+- A CLI help parity test ensures README command rows stay aligned with the real CLI surface.
+
+If commands change, CI fails until README is updated.
 
 ## Community
 

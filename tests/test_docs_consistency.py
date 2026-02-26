@@ -1,4 +1,7 @@
 from pathlib import Path
+import re
+import subprocess
+import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +80,7 @@ def test_readme_command_table_uses_implemented_subcommands():
         "share",
         "console",
         "tui",
+        "finetune",
         "projects",
         "update-skill",
         "synthesize",
@@ -99,6 +103,43 @@ def test_readme_command_table_uses_implemented_subcommands():
         assert len(parts) >= 2, f"malformed command row: {cmd}"
         assert parts[0] == "codeclaw"
         assert parts[1] in supported, f"unsupported command in README: {cmd}"
+
+
+def test_readme_command_table_matches_cli_help_surface():
+    result = subprocess.run(
+        [sys.executable, "-m", "codeclaw", "--help"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    help_text = result.stdout
+
+    command_groups = re.findall(r"\{([^}]+)\}", help_text)
+    group = next(
+        (
+            item
+            for item in command_groups
+            if "prep" in item and "status" in item and "export" in item and "tui" in item
+        ),
+        None,
+    )
+    assert group, "failed to parse CLI command set from `python -m codeclaw --help`"
+    cli_commands = {entry.strip() for entry in group.split(",") if entry.strip()}
+
+    readme_commands: set[str] = set()
+    for line in _read(README).splitlines():
+        line = line.strip()
+        if not line.startswith("| `codeclaw "):
+            continue
+        command = line.split("`")[1]
+        parts = command.split()
+        if len(parts) >= 2:
+            readme_commands.add(parts[1])
+
+    missing = sorted(command for command in cli_commands if command not in readme_commands)
+    assert not missing, f"README command table missing CLI subcommands: {missing}"
 
 
 def test_readme_does_not_reference_removed_update_kb_command():
