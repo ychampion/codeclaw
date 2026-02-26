@@ -13,6 +13,7 @@ from ._helpers import (
     MIN_MANUAL_SCAN_SESSIONS,
 )
 from .config import _handle_config
+from .console import handle_console
 from .diff import handle_diff
 from .export import (
     _run_export,
@@ -165,6 +166,7 @@ def main() -> None:
         "stats": handle_stats,
         "share": handle_share,
         "finetune": _handle_finetune,
+        "console": handle_console,
         "export": _run_export,
     }
 
@@ -314,6 +316,9 @@ def main() -> None:
     finetune.add_argument("--experimental", action="store_true")
     finetune.add_argument("--dataset", type=str, default=None)
     finetune.add_argument("--output", type=str, default=None)
+
+    console = sub.add_parser("console", help="Interactive slash-command console")
+    console.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
 
     exp = sub.add_parser("export", help="Export and push (default)")
     # Export flags on both the subcommand and root parser so `codeclaw --no-push` works

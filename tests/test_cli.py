@@ -621,6 +621,20 @@ class TestWatchCommand:
         assert payload["running"] is True
         assert payload["pid"] == 123
 
+    def test_console_help_and_exit(self, monkeypatch, capsys):
+        inputs = iter(["/help", "/exit"])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs))
+        monkeypatch.setattr(
+            "codeclaw.daemon.daemon_status",
+            lambda: {"running": False, "paused": False, "pending_sessions": 0, "connected_projects": []},
+        )
+        monkeypatch.setattr("sys.argv", ["codeclaw", "console"])
+        main()
+        output = capsys.readouterr().out
+        assert "CodeClaw Console" in output
+        assert "Console commands:" in output
+        assert "Bye." in output
+
     def test_watch_pause_command(self, monkeypatch, capsys):
         monkeypatch.setattr(
             "codeclaw.daemon.set_watch_paused",

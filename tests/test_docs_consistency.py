@@ -75,6 +75,7 @@ def test_readme_command_table_uses_implemented_subcommands():
         "doctor",
         "stats",
         "share",
+        "console",
         "projects",
         "update-skill",
         "synthesize",

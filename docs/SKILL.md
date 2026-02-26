@@ -89,6 +89,7 @@ codeclaw watch --monitor --follow          # Live watcher monitor (status + rece
 codeclaw watch --pause                     # Pause watcher without stopping process
 codeclaw watch --resume                    # Resume watcher polling
 codeclaw watch --switch-project "project"  # Scope watcher to one connected project
+codeclaw console --source both             # Open interactive slash-command console
 codeclaw update-skill claude               # Install/update the codeclaw skill for Claude Code
 ```
 

@@ -104,6 +104,7 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 | `codeclaw watch --monitor [--follow]` | Live watch monitor (status + recent activity) |
 | `codeclaw watch --switch-project "<name>"` | Quickly scope watcher to one project |
 | `codeclaw watch --set-projects "a,b"` | Set connected project scope directly |
+| `codeclaw console` | Interactive slash-command terminal (`/status`, `/logs`, `/scope`, `/run`) |
 | `codeclaw serve` | Start MCP server over stdio |
 | `codeclaw install-mcp` | Register MCP server in Claude config |
 | `codeclaw synthesize --project <name>` | Generate `CODECLAW.md` from synced sessions |
@@ -126,6 +127,18 @@ codeclaw watch --logs --follow
 codeclaw watch --pause
 codeclaw watch --resume
 codeclaw watch --switch-project "codex:codeclaw"
+```
+
+Interactive console mode:
+
+```bash
+codeclaw console --source codex
+# Then inside the prompt:
+/status
+/projects
+/scope codex:codeclaw
+/logs 80
+/run export --no-push
 ```
 
 ## MCP Memory Server

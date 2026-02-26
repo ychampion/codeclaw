@@ -33,6 +33,18 @@ def test_main_diff_dispatch(monkeypatch):
     assert called["diff"] is True
 
 
+def test_main_console_dispatch(monkeypatch):
+    called = {"console": False}
+
+    def _fake_console(_args):
+        called["console"] = True
+
+    monkeypatch.setattr(codeclaw_cli, "handle_console", _fake_console)
+    monkeypatch.setattr(sys, "argv", ["codeclaw", "console"])
+    codeclaw_cli.main()
+    assert called["console"] is True
+
+
 def test_finetune_requires_experimental(capsys):
     with pytest.raises(SystemExit):
         finetune.handle_finetune(argparse.Namespace(experimental=False, dataset=None, output=None))
