@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+import pytest
 
 from codeclaw import cli as codeclaw_cli
 from codeclaw import mcp_server
@@ -215,3 +216,23 @@ def test_mcp_refresh_index_returns_meta(monkeypatch):
     assert payload["ok"] is True
     assert payload["meta"]["refresh_count"] == 1
     assert payload["meta"]["session_count"] == 2
+
+def test_install_mcp_handles_read_oserror(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    config_path = tmp_path / ".claude" / "mcp.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def mock_read_text(self, *args, **kwargs):
+        if str(self).endswith("mcp.json"):
+            raise OSError("Fake OS Error")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", mock_read_text)
+
+    with pytest.raises(SystemExit) as excinfo:
+        mcp_server.install_mcp()
+
+    assert excinfo.value.code == 1
