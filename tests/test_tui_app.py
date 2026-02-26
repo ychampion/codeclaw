@@ -69,3 +69,23 @@ def test_tui_scope_command_updates_connected_projects(monkeypatch, tmp_path):
     invalid = app._cmd_scope(None, ["missing-project"])
     assert invalid.ok is False
     app.jobs.shutdown()
+
+
+def test_tui_source_command_updates_config(monkeypatch, tmp_path):
+    app, cfg = _build_app(monkeypatch, tmp_path, source="auto")
+
+    show = app._cmd_source(None, [])
+    assert show.ok is True
+    assert "current source: auto" in show.message
+
+    set_codex = app._cmd_source(None, ["codex"])
+    assert set_codex.ok is True
+    assert cfg["source"] == "codex"
+
+    set_auto = app._cmd_source(None, ["auto"])
+    assert set_auto.ok is True
+    assert cfg["source"] is None
+
+    bad = app._cmd_source(None, ["invalid-source"])
+    assert bad.ok is False
+    app.jobs.shutdown()

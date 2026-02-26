@@ -24,6 +24,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea
 
+from ..cli._helpers import SOURCE_CHOICES
 from ..cli.export import _run_export
 from ..config import load_config, save_config
 from ..daemon import (
@@ -334,6 +335,14 @@ class CodeClawTuiApp:
         )
         self.registry.register(
             SlashCommand(
+                name="source",
+                help_text="Show or change active source scope",
+                usage="/source [auto|claude|codex|both|cursor|windsurf|aider|continue|antigravity|vscode|zed|xcode-beta]",
+                handler=self._cmd_source,
+            )
+        )
+        self.registry.register(
+            SlashCommand(
                 name="logs",
                 help_text="Show watcher daemon logs",
                 usage="/logs [lines]",
@@ -487,6 +496,24 @@ class CodeClawTuiApp:
             self._watch_paused = bool(payload.get("paused", False))
             return CommandResult(bool(payload.get("ok", True)), "watch resumed")
         return CommandResult(False, f"Unknown watch action: {action}")
+
+    def _cmd_source(self, _ctx, args: list[str]) -> CommandResult:
+        if not args:
+            return CommandResult(True, f"current source: {self.source}")
+        if len(args) != 1:
+            return CommandResult(False, "Usage: /source <value>")
+        candidate = args[0].strip().lower()
+        if candidate not in SOURCE_CHOICES:
+            return CommandResult(False, f"Invalid source: {candidate}")
+
+        self.source = candidate
+        cfg = load_config()
+        if candidate == "auto":
+            cfg["source"] = None
+        else:
+            cfg["source"] = candidate
+        save_config(cfg)
+        return CommandResult(True, f"source updated: {candidate}")
 
     def _cmd_logs(self, _ctx, args: list[str]) -> CommandResult:
         count = 40

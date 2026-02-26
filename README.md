@@ -181,6 +181,7 @@ Inside the TUI:
 ```text
 /help
 /status
+/source codex
 /watch on
 /logs 80
 /projects
