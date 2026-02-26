@@ -746,6 +746,14 @@ def _build_project_name(dir_name: str) -> str:
     start_idx = 0
     if segments and segments[0].endswith(":"):
         start_idx = 1
+    elif (
+        len(segments) > 1
+        and len(segments[0]) == 1
+        and segments[0].isalpha()
+        and segments[1].lower() == "users"
+    ):
+        # Some Windows Claude folder names drop the ":" from drive letters (for example "C-Users-...").
+        start_idx = 1
 
     def _join_from(index: int) -> str:
         if index >= len(segments):

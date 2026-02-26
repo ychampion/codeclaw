@@ -35,6 +35,7 @@ class CodeClawConfig(TypedDict, total=False):
     stage: str | None  # "auth" | "configure" | "review" | "confirmed" | "done"
     projects_confirmed: bool
     watch_interval_seconds: int
+    watch_paused: bool
     min_sessions_before_push: int
     auto_push: bool
     last_synced_at: str | None
@@ -73,6 +74,7 @@ DEFAULT_CONFIG: CodeClawConfig = {
     "dataset_enabled": True,
     "disabled_projects": [],
     "watch_interval_seconds": 60,
+    "watch_paused": False,
     "min_sessions_before_push": 5,
     "auto_push": False,
     "stats_total_exports": 0,

@@ -83,6 +83,12 @@ codeclaw export --source claude --no-push  # Export only Claude Code sessions
 codeclaw export --all-projects             # Include everything (ignore exclusions)
 codeclaw export --no-thinking              # Exclude extended thinking blocks
 codeclaw export -o /path/to/file.jsonl     # Custom output path
+codeclaw watch --status                    # Watcher status with transparency fields
+codeclaw watch --logs --follow             # Stream daemon logs
+codeclaw watch --monitor --follow          # Live watcher monitor (status + recent logs)
+codeclaw watch --pause                     # Pause watcher without stopping process
+codeclaw watch --resume                    # Resume watcher polling
+codeclaw watch --switch-project "project"  # Scope watcher to one connected project
 codeclaw update-skill claude               # Install/update the codeclaw skill for Claude Code
 ```
 

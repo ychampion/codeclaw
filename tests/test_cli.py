@@ -621,6 +621,46 @@ class TestWatchCommand:
         assert payload["running"] is True
         assert payload["pid"] == 123
 
+    def test_watch_pause_command(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            "codeclaw.daemon.set_watch_paused",
+            lambda paused: {"ok": True, "paused": paused},
+        )
+        monkeypatch.setattr("sys.argv", ["codeclaw", "watch", "--pause"])
+        main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["paused"] is True
+
+    def test_watch_logs_command(self, monkeypatch, capsys):
+        monkeypatch.setattr("codeclaw.daemon.read_recent_logs", lambda lines=80: ["l1", "l2"][-lines:])
+        monkeypatch.setattr("sys.argv", ["codeclaw", "watch", "--logs", "--lines", "2"])
+        main()
+        output = capsys.readouterr().out
+        assert "l1" in output
+        assert "l2" in output
+
+    def test_watch_switch_project_command(self, monkeypatch, capsys):
+        saved: dict = {}
+        monkeypatch.setattr("codeclaw.cli.watch.load_config", lambda: {"source": "both", "connected_projects": []})
+        monkeypatch.setattr("codeclaw.cli.watch.save_config", lambda cfg: saved.update(cfg))
+        monkeypatch.setattr(
+            "codeclaw.cli.watch.discover_projects",
+            lambda: [
+                {"display_name": "codex:codeclaw", "source": "codex"},
+                {"display_name": "codex:other", "source": "codex"},
+            ],
+        )
+        monkeypatch.setattr(
+            "sys.argv",
+            ["codeclaw", "watch", "--switch-project", "codex:codeclaw", "--source", "both"],
+        )
+        main()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["connected_projects"] == ["codex:codeclaw"]
+        assert saved["connected_projects"] == ["codex:codeclaw"]
+
     def test_setup_yes_starts_daemon(self, monkeypatch, capsys):
         monkeypatch.setattr("codeclaw.daemon.start_daemon", lambda: {"running": True, "pid": 456})
         monkeypatch.setattr("sys.argv", ["codeclaw", "setup", "--yes"])

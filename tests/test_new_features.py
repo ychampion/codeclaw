@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codeclaw import cli as codeclaw_cli
+from codeclaw import daemon
 from codeclaw import source_adapters
 from codeclaw.cli import finetune, growth
 from codeclaw.cli import push_to_huggingface
@@ -205,3 +206,8 @@ def test_push_to_hf_exits_on_encryption_error(monkeypatch, tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "Error reading encrypted export file" in captured.err
+
+
+def test_is_pid_running_handles_system_error(monkeypatch):
+    monkeypatch.setattr(daemon.os, "kill", lambda _pid, _sig: (_ for _ in ()).throw(SystemError("bad pid")))
+    assert daemon._is_pid_running(1234) is False

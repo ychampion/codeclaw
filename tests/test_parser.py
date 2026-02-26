@@ -69,6 +69,12 @@ class TestBuildProjectName:
         result = _build_project_name("-Users-alice-Documents-my-cool-project")
         assert result == "my-cool-project"
 
+    def test_windows_drive_style_without_colon(self):
+        assert _build_project_name("C-Users-alice-Documents-myproject") == "myproject"
+
+    def test_windows_drive_style_without_colon_bare_home(self):
+        assert _build_project_name("C-Users-alice") == "~home"
+
 
 # --- _normalize_timestamp ---
 

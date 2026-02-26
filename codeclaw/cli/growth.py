@@ -183,6 +183,8 @@ def handle_doctor(args) -> None:
     mcp = _check_mcp_registration()
     encryption = encryption_status(config)
     adapters = adapter_diagnostics()
+    from ..daemon import daemon_status
+    watch = daemon_status()
     connected = set(config.get("connected_projects", []))
     connected_available = sorted(
         str(project.get("display_name", "")) for project in projects if str(project.get("display_name", "")) in connected
@@ -237,6 +239,20 @@ def handle_doctor(args) -> None:
             ),
             **encryption,
         },
+        "watch_daemon": {
+            "ok": True,
+            "running": bool(watch.get("running")),
+            "paused": bool(watch.get("paused")),
+            "pending_sessions": int(watch.get("pending_sessions", 0) or 0),
+            "pid": watch.get("pid"),
+            "log_file": watch.get("log_file"),
+            "state_file": watch.get("state_file"),
+            "message": (
+                "Watcher daemon is running."
+                if watch.get("running")
+                else "Watcher daemon is not running (start with `codeclaw watch --start`)."
+            ),
+        },
     }
     ok = all(bool(item.get("ok")) for item in checks.values())
 
@@ -251,6 +267,8 @@ def handle_doctor(args) -> None:
         next_steps.append("Run: codeclaw config --encryption on or codeclaw setup to initialize encryption.")
     if stale_connected:
         next_steps.append("Run: codeclaw projects to review connected project scope.")
+    if not watch.get("running"):
+        next_steps.append("Run: codeclaw watch --start (or keep manual mode without background sync).")
     if not checks["project_discovery"]["ok"] and checks["session_sources"]["ok"]:
         next_steps.append("Run: codeclaw prep to inspect source scope and project detection.")
 

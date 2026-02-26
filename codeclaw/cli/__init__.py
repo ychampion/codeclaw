@@ -212,6 +212,21 @@ def main() -> None:
     watch_group.add_argument("--stop", action="store_true", help="Stop daemon")
     watch_group.add_argument("--status", action="store_true", help="Show daemon status")
     watch_group.add_argument("--now", action="store_true", help="Trigger immediate sync")
+    watch_group.add_argument("--pause", action="store_true", help="Pause polling without stopping daemon")
+    watch_group.add_argument("--resume", action="store_true", help="Resume polling after pause")
+    watch_group.add_argument("--logs", action="store_true", help="Show daemon logs")
+    watch_group.add_argument("--monitor", action="store_true", help="Show live daemon status and recent logs")
+    watch_group.add_argument("--switch-project", type=str, default=None, help="Switch connected scope to one project")
+    watch_group.add_argument(
+        "--set-projects",
+        type=str,
+        default=None,
+        help="Set connected projects via CSV (or use 'all' to clear scope filter)",
+    )
+    watch.add_argument("--source", choices=SOURCE_CHOICES, default="auto", help="Source scope for project actions")
+    watch.add_argument("--lines", type=int, default=80, help="Line count for --logs/--monitor")
+    watch.add_argument("--follow", action="store_true", help="Keep streaming logs/monitor output")
+    watch.add_argument("--interval", type=float, default=1.5, help="Refresh interval seconds for follow mode")
 
     setup = sub.add_parser("setup", help="Run setup wizard")
     setup.add_argument("--yes", action="store_true", help="Accept setup defaults")

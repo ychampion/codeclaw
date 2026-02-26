@@ -99,7 +99,11 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 | `codeclaw confirm ...` | Run checks and unlock push gate |
 | `codeclaw export --publish-attestation "..."` | Push dataset after approval |
 | `codeclaw share [--publish]` | Fast export flow with optional publish + dataset card update |
-| `codeclaw watch --start|--stop|--status|--now` | Manage background sync daemon |
+| `codeclaw watch --start|--stop|--status|--now|--pause|--resume` | Manage background sync daemon lifecycle |
+| `codeclaw watch --logs [--follow]` | View daemon logs with optional streaming |
+| `codeclaw watch --monitor [--follow]` | Live watch monitor (status + recent activity) |
+| `codeclaw watch --switch-project "<name>"` | Quickly scope watcher to one project |
+| `codeclaw watch --set-projects "a,b"` | Set connected project scope directly |
 | `codeclaw serve` | Start MCP server over stdio |
 | `codeclaw install-mcp` | Register MCP server in Claude config |
 | `codeclaw synthesize --project <name>` | Generate `CODECLAW.md` from synced sessions |
@@ -112,6 +116,17 @@ Experimental preview command:
 Additional source filters are available for adapter-backed ingestion:
 
 - `cursor`, `windsurf`, `aider`, `continue`, `antigravity`, `vscode`, `zed`, `xcode-beta`
+
+Watch transparency examples:
+
+```bash
+codeclaw watch --status
+codeclaw watch --monitor --follow
+codeclaw watch --logs --follow
+codeclaw watch --pause
+codeclaw watch --resume
+codeclaw watch --switch-project "codex:codeclaw"
+```
 
 ## MCP Memory Server
 

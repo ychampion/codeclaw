@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import logging.handlers
 import os
@@ -24,6 +25,7 @@ from .storage import maybe_encrypt_file, read_text, write_text
 CODECLAW_DIR = Path.home() / ".codeclaw"
 PID_FILE = CODECLAW_DIR / "daemon.pid"
 LOG_FILE = CODECLAW_DIR / "daemon.log"
+STATE_FILE = CODECLAW_DIR / "daemon_state.json"
 PENDING_FILE = CODECLAW_DIR / "pending.jsonl"
 ARCHIVE_DIR = CODECLAW_DIR / "archive"
 SYSTEMD_USER_UNIT = Path.home() / ".config" / "systemd" / "user" / "codeclaw.service"
@@ -52,11 +54,36 @@ def _setup_logger() -> logging.Logger:
     return logger
 
 
+def _read_state() -> dict[str, object]:
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        raw = STATE_FILE.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _write_state(update: dict[str, object], *, replace: bool = False) -> dict[str, object]:
+    CODECLAW_DIR.mkdir(parents=True, exist_ok=True)
+    state = {} if replace else _read_state()
+    state.update(update)
+    state["updated_at"] = _now_iso()
+    try:
+        STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError:
+        return state
+    return state
+
+
 def _is_pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
         return True
-    except OSError:
+    except (OSError, SystemError):
         return False
 
 
@@ -133,9 +160,36 @@ def _rotate_pending() -> Path | None:
 
 def _poll_once(logger: logging.Logger) -> int:
     config = load_config()
+    if bool(config.get("watch_paused", False)):
+        logger.info("Watcher paused; skipping poll cycle")
+        _write_state(
+            {
+                "running": True,
+                "paused": True,
+                "last_poll_at": _now_iso(),
+                "last_result": "paused",
+                "last_sessions": 0,
+                "pending_sessions": _count_jsonl(PENDING_FILE),
+                "last_error": None,
+            }
+        )
+        return 0
+
     changed_dirs = _scan_changed_project_dirs(config.get("last_synced_at"))
     if not changed_dirs:
         logger.info("No new session files detected")
+        _write_state(
+            {
+                "running": True,
+                "paused": False,
+                "last_poll_at": _now_iso(),
+                "last_result": "no_changes",
+                "last_sessions": 0,
+                "pending_sessions": _count_jsonl(PENDING_FILE),
+                "last_changed_projects": [],
+                "last_error": None,
+            }
+        )
         return 0
 
     selected = [p for p in discover_projects() if p.get("dir_name") in changed_dirs]
@@ -143,6 +197,18 @@ def _poll_once(logger: logging.Logger) -> int:
         logger.info("No matching projects after change scan")
         config["last_synced_at"] = _now_iso()
         save_config(config)
+        _write_state(
+            {
+                "running": True,
+                "paused": False,
+                "last_poll_at": _now_iso(),
+                "last_result": "no_matching_projects",
+                "last_sessions": 0,
+                "pending_sessions": _count_jsonl(PENDING_FILE),
+                "last_changed_projects": sorted(changed_dirs),
+                "last_error": None,
+            }
+        )
         return 0
 
     anonymizer = Anonymizer(extra_usernames=config.get("redact_usernames", []))
@@ -157,6 +223,8 @@ def _poll_once(logger: logging.Logger) -> int:
             custom_strings=config.get("redact_strings", []),
         )
         new_sessions = meta.get("sessions", 0)
+        push_attempted = False
+        push_succeeded = False
         if new_sessions:
             _append_file(tmp_path, PENDING_FILE)
             logger.info("Appended %s sessions to pending queue", new_sessions)
@@ -171,6 +239,7 @@ def _poll_once(logger: logging.Logger) -> int:
             if not repo_id:
                 logger.error("auto_push enabled but no repo configured")
             else:
+                push_attempted = True
                 logger.info("Auto-push triggered: pending=%s threshold=%s", pending_count, min_sessions)
                 pushed = False
                 for attempt in range(len(RETRY_BACKOFF_SECONDS) + 1):
@@ -188,6 +257,7 @@ def _poll_once(logger: logging.Logger) -> int:
                         )
                         time.sleep(delay)
                 if pushed:
+                    push_succeeded = True
                     archive_file = _rotate_pending()
                     logger.info("Auto-push succeeded; rotated pending to %s", archive_file)
                     _run_synthesizer_for_projects(meta.get("projects", []), logger)
@@ -196,7 +266,35 @@ def _poll_once(logger: logging.Logger) -> int:
         config = load_config()
         config["last_synced_at"] = _now_iso()
         save_config(config)
+        _write_state(
+            {
+                "running": True,
+                "paused": False,
+                "last_poll_at": _now_iso(),
+                "last_result": "sessions_added" if new_sessions else "dedupe_noop",
+                "last_sessions": int(new_sessions),
+                "pending_sessions": _count_jsonl(PENDING_FILE),
+                "last_changed_projects": sorted(changed_dirs),
+                "auto_push_attempted": push_attempted,
+                "auto_push_succeeded": push_succeeded,
+                "last_error": None,
+            }
+        )
         return new_sessions
+    except Exception as exc:
+        _write_state(
+            {
+                "running": True,
+                "paused": bool(load_config().get("watch_paused", False)),
+                "last_poll_at": _now_iso(),
+                "last_result": "error",
+                "last_sessions": 0,
+                "pending_sessions": _count_jsonl(PENDING_FILE),
+                "last_changed_projects": sorted(changed_dirs),
+                "last_error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        raise
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -273,7 +371,7 @@ def start_daemon() -> dict[str, object]:
     CODECLAW_DIR.mkdir(parents=True, exist_ok=True)
     existing = _read_pid()
     if existing:
-        return {"running": True, "pid": existing}
+        return {"running": True, "pid": existing, "paused": bool(load_config().get("watch_paused", False))}
     proc = subprocess.Popen(
         [sys.executable, "-m", "codeclaw.daemon", "--run"],
         stdout=subprocess.DEVNULL,
@@ -282,6 +380,17 @@ def start_daemon() -> dict[str, object]:
         start_new_session=True,
     )
     PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+    _write_state(
+        {
+            "running": True,
+            "pid": proc.pid,
+            "started_at": _now_iso(),
+            "stopped_at": None,
+            "paused": bool(load_config().get("watch_paused", False)),
+            "last_error": None,
+        },
+        replace=True,
+    )
     _install_watch_service()
     return {"running": True, "pid": proc.pid}
 
@@ -290,20 +399,66 @@ def stop_daemon() -> dict[str, object]:
     pid = _read_pid()
     if not pid:
         PID_FILE.unlink(missing_ok=True)
+        _write_state({"running": False, "pid": None, "stopped_at": _now_iso()})
         return {"running": False}
     os.kill(pid, signal.SIGTERM)
+    _write_state({"running": False, "stopping_pid": pid, "stop_requested_at": _now_iso()})
     return {"running": False, "stopping_pid": pid}
 
 
 def daemon_status() -> dict[str, object]:
     pid = _read_pid()
+    config = load_config()
+    state = _read_state()
+    pending_sessions = _count_jsonl(PENDING_FILE)
+    log_size_bytes = LOG_FILE.stat().st_size if LOG_FILE.exists() else 0
     return {
         "running": bool(pid),
         "pid": pid,
+        "paused": bool(config.get("watch_paused", False)),
+        "source": config.get("source"),
+        "connected_projects": config.get("connected_projects", []),
+        "pending_sessions": pending_sessions,
+        "last_synced_at": config.get("last_synced_at"),
         "pid_file": str(PID_FILE),
         "log_file": str(LOG_FILE),
+        "log_size_bytes": log_size_bytes,
+        "state_file": str(STATE_FILE),
         "pending_file": str(PENDING_FILE),
+        "state": state,
     }
+
+
+def set_watch_paused(paused: bool) -> dict[str, object]:
+    config = load_config()
+    config["watch_paused"] = bool(paused)
+    save_config(config)
+    now = _now_iso()
+    _write_state(
+        {
+            "paused": bool(paused),
+            "pause_updated_at": now,
+            "paused_at": now if paused else None,
+            "resumed_at": now if not paused else None,
+            "last_error": None,
+        }
+    )
+    status = daemon_status()
+    status["ok"] = True
+    status["action"] = "paused" if paused else "resumed"
+    return status
+
+
+def read_recent_logs(lines: int = 80) -> list[str]:
+    if lines <= 0:
+        return []
+    if not LOG_FILE.exists():
+        return []
+    try:
+        content = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    return content[-lines:]
 
 
 def trigger_sync_now() -> dict[str, object]:
@@ -333,6 +488,16 @@ def trigger_sync_now() -> dict[str, object]:
 def run_daemon() -> None:
     logger = _setup_logger()
     state = _StopState()
+    _write_state(
+        {
+            "running": True,
+            "pid": os.getpid(),
+            "started_at": _read_state().get("started_at", _now_iso()),
+            "stopped_at": None,
+            "last_error": None,
+            "paused": bool(load_config().get("watch_paused", False)),
+        }
+    )
 
     def _request_stop(signum, _frame):
         logger.info("Received signal %s; will stop after current poll cycle", signum)
@@ -407,6 +572,7 @@ def run_daemon() -> None:
         config["last_synced_at"] = _now_iso()
         save_config(config)
         PID_FILE.unlink(missing_ok=True)
+        _write_state({"running": False, "pid": None, "stopped_at": _now_iso()})
         logger.info("Daemon exited cleanly")
 
 
