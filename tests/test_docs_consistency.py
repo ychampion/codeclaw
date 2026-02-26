@@ -85,6 +85,7 @@ def test_readme_command_table_uses_implemented_subcommands():
         "tui",
         "finetune",
         "projects",
+        "reset",
         "update-skill",
         "synthesize",
         "watch",

@@ -26,5 +26,22 @@ def handle_tui(args) -> None:
         sys.exit(1)
 
     plugin_dirs = [Path(path) for path in (args.plugin_dir or [])]
-    run_tui(source=args.source, plugin_dirs=plugin_dirs or None)
+    try:
+        run_tui(source=args.source, plugin_dirs=plugin_dirs or None)
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "TUI failed to start.",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                    "hint": (
+                        "Try `codeclaw console` for fallback mode, or run in a fully interactive terminal "
+                        "(Windows Terminal / PowerShell with TTY / macOS Terminal / Linux shell)."
+                    ),
+                },
+                indent=2,
+            )
+        )
+        sys.exit(1)
 

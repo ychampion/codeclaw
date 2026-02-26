@@ -27,6 +27,7 @@ from .growth import handle_doctor, handle_share, handle_stats
 from .mcp import handle_install_mcp, handle_serve
 from .finetune import handle_finetune
 from .projects import handle_projects
+from .reset import handle_reset
 from .setup import handle_setup
 from .tui import handle_tui
 from .update import _handle_synthesize, update_skill
@@ -179,6 +180,7 @@ def main() -> None:
         "watch": _handle_watch,
         "setup": handle_setup,
         "projects": handle_projects,
+        "reset": handle_reset,
         "list": _handle_list,
         "config": _handle_config,
         "doctor": handle_doctor,
@@ -284,6 +286,13 @@ def main() -> None:
         action="store_true",
         help="Clear connected projects (all discovered projects become eligible)",
     )
+
+    reset = sub.add_parser("reset", help="Reset local setup files for clean re-onboarding")
+    reset.add_argument("--all", action="store_true", help="Reset config, local state, and MCP entry")
+    reset.add_argument("--config", action="store_true", help="Reset only ~/.codeclaw/config.json")
+    reset.add_argument("--state", action="store_true", help="Reset watcher/TUI runtime files under ~/.codeclaw")
+    reset.add_argument("--mcp", action="store_true", help="Remove only the CodeClaw MCP entry from ~/.claude/mcp.json")
+    reset.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
 
     cfg = sub.add_parser("config", help="View or set config")
     cfg.add_argument("--repo", type=str, help="Set HF repo")

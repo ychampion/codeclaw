@@ -76,6 +76,9 @@ codeclaw --version
 # Guided onboarding (HF auth help, repo setup, project scope, MCP, watcher)
 codeclaw setup
 
+# Reset local setup for a clean re-test (config/state/MCP entry)
+codeclaw reset --all --yes
+
 # Verify environment and connected scope
 codeclaw doctor
 codeclaw projects --source both
@@ -112,6 +115,7 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 | `codeclaw stats --skill` | Include trajectory-based growth metrics |
 | `codeclaw diff` | Preview exactly what would be redacted before confirm |
 | `codeclaw projects` | Manage connected project scope |
+| `codeclaw reset [--all|--config|--state|--mcp]` | Reset local setup files for clean re-onboarding/re-testing |
 | `codeclaw list` | List projects with source, size, and exclusion state |
 | `codeclaw config ...` | Configure repo, sources, exclusions, and redactions |
 | `codeclaw config --encryption on|off|status` | Manage encryption-at-rest mode |

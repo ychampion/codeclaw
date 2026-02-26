@@ -59,6 +59,18 @@ def test_main_tui_dispatch(monkeypatch):
     assert called["tui"] is True
 
 
+def test_main_reset_dispatch(monkeypatch):
+    called = {"reset": False}
+
+    def _fake_reset(_args):
+        called["reset"] = True
+
+    monkeypatch.setattr(codeclaw_cli, "handle_reset", _fake_reset)
+    monkeypatch.setattr(sys, "argv", ["codeclaw", "reset", "--all", "--yes"])
+    codeclaw_cli.main()
+    assert called["reset"] is True
+
+
 def test_main_default_dispatches_tui(monkeypatch):
     called = {"tui": False}
 
