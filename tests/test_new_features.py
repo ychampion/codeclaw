@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codeclaw import __version__
 from codeclaw import cli as codeclaw_cli
 from codeclaw import daemon
 from codeclaw import source_adapters
@@ -79,6 +80,14 @@ def test_main_root_export_flags_still_dispatch_export(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["codeclaw", "--no-push"])
     codeclaw_cli.main()
     assert called["export"] is True
+
+
+def test_main_version_flag_outputs_package_version(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["codeclaw", "--version"])
+    with pytest.raises(SystemExit) as exc:
+        codeclaw_cli.main()
+    assert exc.value.code == 0
+    assert __version__ in capsys.readouterr().out
 
 
 def test_finetune_requires_experimental(capsys):

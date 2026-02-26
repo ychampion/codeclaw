@@ -64,6 +64,12 @@ cd codeclaw
 pip install -e ".[dev]"
 ```
 
+Check installed version:
+
+```bash
+codeclaw --version
+```
+
 ## Quick Start
 
 ```bash
@@ -160,6 +166,14 @@ Full-screen TUI mode:
 codeclaw
 # equivalent explicit command:
 codeclaw tui --source both
+```
+
+If plain `codeclaw` prints export/confirm JSON instead of opening TUI, you are on an older build.
+Upgrade and verify:
+
+```bash
+pip install --upgrade codeclaw
+codeclaw --version
 ```
 
 Inside the TUI:

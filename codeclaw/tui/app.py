@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import logging.handlers
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -142,8 +143,18 @@ class CodeClawTuiApp:
         return bindings
 
     def _show_banner(self) -> None:
-        self.emit_feed("CodeClaw TUI started", level="info")
-        self.emit_feed("Type /help to list commands.", level="info")
+        logo_lines = [
+            "  ____          _      ____ _                 ",
+            " / ___|___   __| | ___/ ___| | __ ___      __ ",
+            "| |   / _ \\ / _` |/ _ \\___ \\ |/ _` \\ \\ /\\ / / ",
+            "| |__| (_) | (_| |  __/___) | | (_| |\\ V  V /  ",
+            " \\____\\___/ \\__,_|\\___|____/|_|\\__,_| \\_/\\_/   ",
+        ]
+        for line in logo_lines:
+            self.emit_feed(line, level="info")
+        self.emit_feed("CodeClaw TUI ready", level="success")
+        self.emit_feed(f"platform={sys.platform} source={self.source}", level="info")
+        self.emit_feed("Try: /help  /status  /watch status  /jobs", level="info")
 
     def _refresh_feed_text(self) -> None:
         self.feed.text = "\n".join(self.feed_lines[-1000:])
@@ -180,7 +191,7 @@ class CodeClawTuiApp:
         current_project = self._current_project_label()
         jobs = self.jobs.active_count()
         text = (
-            f" {spinner} mode={self.mode} project={current_project} "
+            f" CodeClaw {spinner} mode={self.mode} project={current_project} "
             f"| jobs={jobs} | last={self.last_result} | {self.hint} "
         )
         return FormattedText([("", text)])

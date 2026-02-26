@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from .. import __version__
 from ._helpers import (
     CONFIRM_COMMAND_EXAMPLE,
     EXPORT_REVIEW_PUBLISH_STEPS,
@@ -190,6 +191,7 @@ def main() -> None:
     }
 
     parser = argparse.ArgumentParser(description="CodeClaw — Claude/Codex -> Hugging Face")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     prep_parser = sub.add_parser("prep", help="Data prep — discover projects, detect HF, output JSON")
