@@ -146,6 +146,8 @@ codeclaw console --source codex
 Full-screen TUI mode:
 
 ```bash
+codeclaw
+# equivalent explicit command:
 codeclaw tui --source both
 ```
 

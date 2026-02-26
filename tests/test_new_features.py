@@ -57,6 +57,30 @@ def test_main_tui_dispatch(monkeypatch):
     assert called["tui"] is True
 
 
+def test_main_default_dispatches_tui(monkeypatch):
+    called = {"tui": False}
+
+    def _fake_tui(_args):
+        called["tui"] = True
+
+    monkeypatch.setattr(codeclaw_cli, "handle_tui", _fake_tui)
+    monkeypatch.setattr(sys, "argv", ["codeclaw"])
+    codeclaw_cli.main()
+    assert called["tui"] is True
+
+
+def test_main_root_export_flags_still_dispatch_export(monkeypatch):
+    called = {"export": False}
+
+    def _fake_export(_args):
+        called["export"] = True
+
+    monkeypatch.setattr(codeclaw_cli, "_run_export", _fake_export)
+    monkeypatch.setattr(sys, "argv", ["codeclaw", "--no-push"])
+    codeclaw_cli.main()
+    assert called["export"] is True
+
+
 def test_finetune_requires_experimental(capsys):
     with pytest.raises(SystemExit):
         finetune.handle_finetune(argparse.Namespace(experimental=False, dataset=None, output=None))

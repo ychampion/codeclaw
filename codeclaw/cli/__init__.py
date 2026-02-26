@@ -148,6 +148,23 @@ def _handle_finetune(args: argparse.Namespace) -> None:
     handle_finetune(args)
 
 
+def _resolve_default_command(args: argparse.Namespace) -> str:
+    """Resolve the implicit command when no subcommand was provided."""
+    if args.command:
+        return args.command
+    export_intent = bool(
+        args.output
+        or args.repo
+        or args.all_projects
+        or args.no_thinking
+        or args.no_push
+        or args.dry_run
+        or args.publish_attestation
+        or getattr(args, "attest_user_approved_publish", False)
+    )
+    return "export" if export_intent else "tui"
+
+
 def main() -> None:
     COMMAND_HANDLERS = {
         "prep": _handle_prep,
@@ -331,7 +348,7 @@ def main() -> None:
         help="Additional plugin directory (repeatable)",
     )
 
-    exp = sub.add_parser("export", help="Export and push (default)")
+    exp = sub.add_parser("export", help="Export and push datasets")
     # Export flags on both the subcommand and root parser so `codeclaw --no-push` works
     for target in (exp, parser):
         target.add_argument("--output", "-o", type=Path, default=None)
@@ -350,6 +367,6 @@ def main() -> None:
         target.add_argument("--attest-user-approved-publish", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
-    command = args.command or "export"
+    command = _resolve_default_command(args)
     handler = COMMAND_HANDLERS.get(command, _run_export)
     handler(args)
