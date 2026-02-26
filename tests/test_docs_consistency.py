@@ -2,6 +2,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
+
+from codeclaw import __version__
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -157,3 +160,9 @@ def test_codeclaw_json_marker_consistency():
         text = _read(path)
         assert "---CODECLAW_JSON---" in text, f"missing marker in {path}"
         assert legacy_marker not in text, f"legacy marker found in {path}"
+
+
+def test_package_version_matches_pyproject():
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = pyproject["project"]["version"]
+    assert declared == __version__

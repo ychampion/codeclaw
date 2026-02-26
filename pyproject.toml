@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codeclaw"
-version = "0.4.2"
+version = "0.4.3"
 description = "Export your Claude Code and Codex conversations to Hugging Face as structured training data"
 requires-python = ">=3.10"
 license = "MIT"

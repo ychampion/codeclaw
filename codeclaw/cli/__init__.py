@@ -191,7 +191,7 @@ def main() -> None:
     }
 
     parser = argparse.ArgumentParser(description="CodeClaw — Claude/Codex -> Hugging Face")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     prep_parser = sub.add_parser("prep", help="Data prep — discover projects, detect HF, output JSON")

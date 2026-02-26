@@ -1,5 +1,6 @@
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -88,6 +89,25 @@ def test_main_version_flag_outputs_package_version(monkeypatch, capsys):
         codeclaw_cli.main()
     assert exc.value.code == 0
     assert __version__ in capsys.readouterr().out
+
+
+def test_main_short_version_flag_outputs_package_version(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["codeclaw", "-V"])
+    with pytest.raises(SystemExit) as exc:
+        codeclaw_cli.main()
+    assert exc.value.code == 0
+    assert __version__ in capsys.readouterr().out
+
+
+def test_python_m_codeclaw_version_smoke():
+    result = subprocess.run(
+        [sys.executable, "-m", "codeclaw", "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert __version__ in result.stdout
 
 
 def test_finetune_requires_experimental(capsys):
