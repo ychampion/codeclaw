@@ -261,15 +261,11 @@ Automated redaction is not perfect. Always review local exports before publishin
 ## Package Distribution
 
 - Primary: PyPI (`pip install codeclaw`)
-- Additional: GitHub Packages publish workflow is included for org/internal registry consumption.
-
-Install from GitHub Packages:
-
-```bash
-pip install codeclaw \
-  --index-url https://pypi.pkg.github.com/ychampion/simple/ \
-  --extra-index-url https://pypi.org/simple
-```
+- Release artifacts: wheel/sdist are attached to each GitHub tag release.
+- Optional: publish to a secondary PyPI-compatible index by setting repository secrets:
+  - `SECONDARY_PYPI_REPOSITORY_URL`
+  - `SECONDARY_PYPI_USERNAME`
+  - `SECONDARY_PYPI_PASSWORD`
 
 ## README Sync Policy
 

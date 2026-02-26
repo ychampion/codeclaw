@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Publish Python Package
 
 on:
   push:
@@ -61,13 +61,17 @@ jobs:
         with:
           skip-existing: true
 
-  publish-github-packages:
+  publish-secondary-index:
     needs: build-check
     runs-on: ubuntu-latest
-    continue-on-error: true
+    if: >-
+      ${{
+        secrets.SECONDARY_PYPI_REPOSITORY_URL != '' &&
+        secrets.SECONDARY_PYPI_USERNAME != '' &&
+        secrets.SECONDARY_PYPI_PASSWORD != ''
+      }}
     permissions:
       contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,11 +80,32 @@ jobs:
       - run: pip install build twine
       - run: python -m build
       - run: python -m twine check dist/*
-      - name: Publish to GitHub Packages (Python)
+      - name: Publish to secondary PyPI-compatible index
         env:
-          TWINE_USERNAME: ${{ github.actor }}
-          TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          TWINE_USERNAME: ${{ secrets.SECONDARY_PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.SECONDARY_PYPI_PASSWORD }}
         run: |
           python -m twine upload \
-            --repository-url https://pypi.pkg.github.com/${{ github.repository_owner }}/ \
+            --repository-url ${{ secrets.SECONDARY_PYPI_REPOSITORY_URL }} \
             dist/*
+
+  release-assets:
+    needs: build-check
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - name: Upload wheel/sdist to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
