@@ -329,6 +329,7 @@ def main() -> None:
         target.add_argument("--all-projects", action="store_true")
         target.add_argument("--no-thinking", action="store_true")
         target.add_argument("--no-push", action="store_true")
+        target.add_argument("--dry-run", action="store_true", help="Preview export/publish plan without writing or pushing")
         target.add_argument(
             "--publish-attestation",
             type=str,

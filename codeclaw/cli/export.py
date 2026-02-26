@@ -15,7 +15,15 @@ from ..config import CONFIG_FILE, CodeClawConfig, load_config, save_config
 from ..parser import CLAUDE_DIR, CODEX_DIR, detect_current_project, discover_projects, parse_project_sessions
 from ..redactor import RedactionEngine, redact_session_with_findings
 from ..secrets import _has_mixed_char_types, _shannon_entropy
-from ..storage import EncryptionError, is_encrypted_text, maybe_encrypt_file, read_jsonl, read_text
+from ..storage import (
+    EncryptionError,
+    encryption_status,
+    ensure_encryption_key,
+    is_encrypted_text,
+    maybe_encrypt_file,
+    read_jsonl,
+    read_text,
+)
 
 from ._helpers import (
     CONFIRM_COMMAND_EXAMPLE,
@@ -189,6 +197,95 @@ def _read_sessions_from_jsonl(jsonl_path: Path) -> list[dict]:
     return read_jsonl(jsonl_path, config=load_config(), strict=True)
 
 
+def _chunk_session_entries(
+    entries: list[tuple[str, bytes]],
+    max_operations: int,
+    max_bytes: int,
+) -> list[list[tuple[str, bytes]]]:
+    """Chunk (path, payload) entries by operation count and payload size."""
+    chunks: list[list[tuple[str, bytes]]] = []
+    current: list[tuple[str, bytes]] = []
+    current_bytes = 0
+    safe_max_ops = max(1, int(max_operations))
+    safe_max_bytes = max(1, int(max_bytes))
+
+    for entry in entries:
+        _, payload = entry
+        payload_size = len(payload)
+        would_exceed_ops = len(current) >= safe_max_ops
+        would_exceed_bytes = current and (current_bytes + payload_size > safe_max_bytes)
+        if would_exceed_ops or would_exceed_bytes:
+            chunks.append(current)
+            current = []
+            current_bytes = 0
+        current.append(entry)
+        current_bytes += payload_size
+
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _commit_entries_recursive(
+    api,
+    repo_id: str,
+    entries: list[tuple[str, bytes]],
+    commit_message: str,
+    commit_operation_add_cls,
+) -> int:
+    """Create one or more commits from entries, splitting batches on failure."""
+    if not entries:
+        return 0
+    operations = [
+        commit_operation_add_cls(path_in_repo=path, path_or_fileobj=payload)
+        for path, payload in entries
+    ]
+    try:
+        api.create_commit(
+            repo_id=repo_id,
+            repo_type="dataset",
+            operations=operations,
+            commit_message=commit_message,
+        )
+        return 1
+    except Exception:
+        if len(entries) == 1:
+            path, payload = entries[0]
+            api.upload_file(
+                path_or_fileobj=payload,
+                path_in_repo=path,
+                repo_id=repo_id,
+                repo_type="dataset",
+                commit_message=f"{commit_message} (single-file fallback)",
+            )
+            return 1
+        midpoint = len(entries) // 2
+        left = _commit_entries_recursive(
+            api=api,
+            repo_id=repo_id,
+            entries=entries[:midpoint],
+            commit_message=commit_message,
+            commit_operation_add_cls=commit_operation_add_cls,
+        )
+        right = _commit_entries_recursive(
+            api=api,
+            repo_id=repo_id,
+            entries=entries[midpoint:],
+            commit_message=commit_message,
+            commit_operation_add_cls=commit_operation_add_cls,
+        )
+        return left + right
+
+
+def _config_int(config: dict, key: str, default: int, minimum: int = 1) -> int:
+    raw = config.get(key, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = int(default)
+    return max(minimum, value)
+
+
 def push_to_huggingface(
     jsonl_path: Path,
     repo_id: str,
@@ -201,6 +298,10 @@ def push_to_huggingface(
     except ImportError:
         print("Error: huggingface_hub not installed. Run: pip install huggingface_hub", file=sys.stderr)
         sys.exit(1)
+    try:
+        from huggingface_hub import CommitOperationAdd
+    except ImportError:
+        CommitOperationAdd = None
 
     config = load_config()
     api = HfApi()
@@ -224,40 +325,57 @@ def push_to_huggingface(
         version_id = datetime.now(tz=timezone.utc).strftime("v%Y%m%d-%H%M%S")
         uploaded_hashes: list[str] = []
         skipped_duplicates = 0
-        uploaded_projects: set[str] = set()
+        uploaded_entries: list[tuple[str, bytes]] = []
         ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+        published_at = datetime.now(tz=timezone.utc).isoformat()
         for session in sessions:
             session_hash = _session_fingerprint(session)
             if session_hash in dedupe_index:
                 skipped_duplicates += 1
                 continue
             project = _safe_project_name(str(session.get("project", "unknown")))
-            uploaded_projects.add(project)
             session_id = str(session.get("session_id", "unknown"))[:8] or "unknown"
             path_in_repo = f"data/{project}/train-{ts}-{session_id}.jsonl"
-            api.upload_file(
-                path_or_fileobj=(json.dumps(session, ensure_ascii=False) + "\n").encode(),
-                path_in_repo=path_in_repo,
-                repo_id=repo_id, repo_type="dataset",
-                commit_message=f"Add session {session_id} to {project}",
-            )
+            payload = (json.dumps(session, ensure_ascii=False) + "\n").encode()
+            uploaded_entries.append((path_in_repo, payload))
             uploaded_hashes.append(session_hash)
             dedupe_index[session_hash] = {
                 "session_id": str(session.get("session_id", "")),
                 "project": str(session.get("project", "")),
                 "version": version_id,
-                "published_at": datetime.now(tz=timezone.utc).isoformat(),
+                "published_at": published_at,
             }
+
+        max_ops = _config_int(config, "hf_commit_max_operations", default=100, minimum=1)
+        max_bytes = _config_int(config, "hf_commit_max_bytes", default=8 * 1024 * 1024, minimum=1024)
+        use_commit_api = bool(CommitOperationAdd) and hasattr(api, "create_commit")
+        if uploaded_entries:
+            if use_commit_api:
+                chunks = _chunk_session_entries(uploaded_entries, max_operations=max_ops, max_bytes=max_bytes)
+                total_chunks = len(chunks)
+                for idx, chunk in enumerate(chunks, start=1):
+                    _commit_entries_recursive(
+                        api=api,
+                        repo_id=repo_id,
+                        entries=chunk,
+                        commit_message=(
+                            f"Add CodeClaw sessions batch {idx}/{total_chunks} "
+                            f"({len(chunk)} file{'s' if len(chunk) != 1 else ''})"
+                        ),
+                        commit_operation_add_cls=CommitOperationAdd,
+                    )
+            else:
+                for path_in_repo, payload in uploaded_entries:
+                    api.upload_file(
+                        path_or_fileobj=payload,
+                        path_in_repo=path_in_repo,
+                        repo_id=repo_id,
+                        repo_type="dataset",
+                        commit_message=f"Add CodeClaw session file {Path(path_in_repo).name}",
+                    )
 
         card_meta = dict(meta)
         card_meta["latest_version"] = version_id
-
-        api.upload_file(
-            path_or_fileobj=json.dumps(card_meta, indent=2).encode(),
-            path_in_repo="metadata.json",
-            repo_id=repo_id, repo_type="dataset",
-            commit_message="Update metadata",
-        )
 
         version_manifest = {
             "version": version_id,
@@ -273,38 +391,43 @@ def push_to_huggingface(
                 "redactions": meta.get("redactions", 0),
             },
         }
-        api.upload_file(
-            path_or_fileobj=json.dumps(version_manifest, indent=2).encode(),
-            path_in_repo=f"versions/{version_id}.json",
-            repo_id=repo_id,
-            repo_type="dataset",
-            commit_message=f"Add immutable dataset version {version_id}",
-        )
-        api.upload_file(
-            path_or_fileobj=json.dumps(
-                {
-                    "latest_version": version_id,
-                    "published_at": version_manifest["published_at"],
-                    "sessions_uploaded": version_manifest["sessions_uploaded"],
-                    "sessions_skipped_duplicates": skipped_duplicates,
-                },
-                indent=2,
-            ).encode(),
-            path_in_repo="versions/latest.json",
-            repo_id=repo_id,
-            repo_type="dataset",
-            commit_message=f"Update latest dataset version pointer to {version_id}",
-        )
 
         repo_files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
         project_configs = _list_project_configs(repo_files)
-
-        api.upload_file(
-            path_or_fileobj=_build_dataset_card(repo_id, card_meta, project_configs).encode(),
-            path_in_repo="README.md",
-            repo_id=repo_id, repo_type="dataset",
-            commit_message="Update dataset card",
-        )
+        metadata_entries = [
+            ("metadata.json", json.dumps(card_meta, indent=2).encode()),
+            (f"versions/{version_id}.json", json.dumps(version_manifest, indent=2).encode()),
+            (
+                "versions/latest.json",
+                json.dumps(
+                    {
+                        "latest_version": version_id,
+                        "published_at": version_manifest["published_at"],
+                        "sessions_uploaded": version_manifest["sessions_uploaded"],
+                        "sessions_skipped_duplicates": skipped_duplicates,
+                    },
+                    indent=2,
+                ).encode(),
+            ),
+            ("README.md", _build_dataset_card(repo_id, card_meta, project_configs).encode()),
+        ]
+        if use_commit_api:
+            _commit_entries_recursive(
+                api=api,
+                repo_id=repo_id,
+                entries=metadata_entries,
+                commit_message=f"Update dataset metadata and card for {version_id}",
+                commit_operation_add_cls=CommitOperationAdd,
+            )
+        else:
+            for path_in_repo, payload in metadata_entries:
+                api.upload_file(
+                    path_or_fileobj=payload,
+                    path_in_repo=path_in_repo,
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                    commit_message=f"Update {path_in_repo}",
+                )
     except (OSError, ValueError) as e:
         print(f"Error uploading to Hugging Face: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1118,6 +1241,7 @@ def prep(source_filter: str = "auto") -> None:
 def _run_export(args) -> None:
     """Run the export flow — discover, anonymize, export, optionally push."""
     config = load_config()
+    dry_run = bool(getattr(args, "dry_run", False))
 
     # Gate: dataset generation globally disabled
     if not _is_dataset_globally_enabled(config):
@@ -1150,7 +1274,7 @@ def _run_export(args) -> None:
         sys.exit(1)
 
     # Gate: require `codeclaw confirm` before pushing
-    if not args.no_push:
+    if not args.no_push and not dry_run:
         if args.attest_user_approved_publish and not args.publish_attestation:
             print(json.dumps({
                 "error": "Deprecated publish attestation flag was provided.",
@@ -1223,6 +1347,8 @@ def _run_export(args) -> None:
     print("=" * 50)
     print("  CodeClaw — Claude/Codex Log Exporter")
     print("=" * 50)
+    if dry_run:
+        print("Mode: dry-run (no files written, no publish actions)")
 
     if not _has_session_sources(source_filter):
         if source_filter == "claude":
@@ -1338,6 +1464,40 @@ def _run_export(args) -> None:
         print("\nNo projects to export. Run: codeclaw projects to configure connected scope.")
         sys.exit(1)
 
+    if dry_run:
+        dry_payload = {
+            "ok": True,
+            "dry_run": True,
+            "source": source_choice,
+            "would_publish": not args.no_push,
+            "would_require_confirm": bool(config.get("stage") != "confirmed" and not args.no_push),
+            "repo": repo_id,
+            "included_projects": [
+                {
+                    "name": p["display_name"],
+                    "source": p.get("source", "claude"),
+                    "sessions": p.get("session_count", 0),
+                    "size": _format_size(p.get("total_size_bytes", 0)),
+                }
+                for p in included
+            ],
+            "estimated_sessions": sum(int(p.get("session_count", 0) or 0) for p in included),
+            "estimated_raw_size": _format_size(
+                sum(int(p.get("total_size_bytes", 0) or 0) for p in included)
+            ),
+            "next_steps": [
+                "Dry-run complete: no export file was generated.",
+                "Run `codeclaw export --no-push` to generate and review an export file.",
+                (
+                    "After confirm, run `codeclaw export --publish-attestation \"User explicitly approved publishing to Hugging Face.\"`"
+                    if not args.no_push
+                    else "If ready to publish later, run export without --no-push after confirm."
+                ),
+            ],
+        }
+        print(json.dumps(dry_payload, indent=2))
+        return
+
     # Build anonymizer with extra usernames from config
     extra_usernames = config.get("redact_usernames", [])
     anonymizer = Anonymizer(extra_usernames=extra_usernames)
@@ -1352,6 +1512,18 @@ def _run_export(args) -> None:
 
     # Export
     output_path = args.output or Path("codeclaw_conversations.jsonl")
+    enc_status = encryption_status(config)
+    if bool(config.get("encryption_enabled", True)) and not bool(enc_status.get("key_present")):
+        key_ready, key_ref, key_backend = ensure_encryption_key(config)
+        if key_ready and key_ref:
+            config["encryption_key_ref"] = key_ref
+            save_config(config)
+            print(f"\nInitialized encryption key ({key_backend}) because encryption is enabled.")
+        else:
+            print(
+                "\nWarning: encryption is enabled but no key is available; export file may remain plaintext.",
+                file=sys.stderr,
+            )
 
     print(f"\nExporting to {output_path}...")
     meta = export_to_jsonl(

@@ -80,6 +80,7 @@ codeclaw export --no-push                  # Export locally only
 codeclaw export --source both --no-push    # Export Claude + Codex sessions
 codeclaw export --source codex --no-push   # Export only Codex sessions
 codeclaw export --source claude --no-push  # Export only Claude Code sessions
+codeclaw export --dry-run                  # Preview export/publish plan without writing files
 codeclaw export --all-projects             # Include everything (ignore exclusions)
 codeclaw export --no-thinking              # Exclude extended thinking blocks
 codeclaw export -o /path/to/file.jsonl     # Custom output path

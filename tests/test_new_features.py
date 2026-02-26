@@ -12,7 +12,7 @@ from codeclaw import source_adapters
 from codeclaw.cli import finetune, growth
 from codeclaw.cli import push_to_huggingface
 from codeclaw.cli import export as export_cli
-from codeclaw.storage import EncryptionError, decrypt_text, encrypt_text
+from codeclaw.storage import EncryptionError, decrypt_text, encrypt_text, maybe_encrypt_file
 
 
 def _extract_json(stdout: str) -> dict:
@@ -161,6 +161,7 @@ def test_push_to_hf_writes_version_manifest(monkeypatch, tmp_path):
     mock_api = MagicMock()
     mock_api.whoami.return_value = {"name": "alice"}
     mock_api.list_repo_files.return_value = []
+    mock_api.create_commit.side_effect = RuntimeError("commit API unavailable in mock")
     mock_hf_module = MagicMock()
     mock_hf_module.HfApi.return_value = mock_api
 
@@ -172,6 +173,63 @@ def test_push_to_hf_writes_version_manifest(monkeypatch, tmp_path):
     assert "versions/latest.json" in uploaded_paths
     assert saved.get("dataset_latest_version")
     assert saved.get("published_dedupe_index")
+
+
+def test_push_to_hf_uses_batched_commit_api(monkeypatch, tmp_path):
+    jsonl_path = tmp_path / "data.jsonl"
+    jsonl_path.write_text(
+        "\n".join(
+            [
+                '{"session_id":"s1","project":"proj","model":"m","messages":[{"role":"user","content":"hi"}],"stats":{}}',
+                '{"session_id":"s2","project":"proj","model":"m","messages":[{"role":"user","content":"hi"}],"stats":{}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    saved: dict = {}
+
+    monkeypatch.setattr(
+        "codeclaw.cli.export.load_config",
+        lambda: {
+            "repo_private": True,
+            "published_dedupe_index": {},
+            "dataset_versioning_mode": "immutable_snapshots",
+            "synced_session_ids": [],
+            "hf_commit_max_operations": 1,
+        },
+    )
+    monkeypatch.setattr("codeclaw.cli.export.save_config", lambda cfg: saved.update(cfg))
+
+    mock_api = MagicMock()
+    mock_api.whoami.return_value = {"name": "alice"}
+    mock_api.list_repo_files.return_value = []
+
+    class _CommitOperationAdd:
+        def __init__(self, path_in_repo, path_or_fileobj):
+            self.path_in_repo = path_in_repo
+            self.path_or_fileobj = path_or_fileobj
+
+    class _HFModule:
+        HfApi = lambda self=None: mock_api
+        CommitOperationAdd = _CommitOperationAdd
+
+    with patch.dict("sys.modules", {"huggingface_hub": _HFModule()}):
+        push_to_huggingface(
+            jsonl_path,
+            "alice/repo",
+            {"exported_session_ids": ["s1", "s2"], "sessions": 2, "projects": ["proj"], "redactions": 0},
+        )
+
+    assert mock_api.create_commit.call_count >= 2
+    commit_paths = []
+    for call in mock_api.create_commit.call_args_list:
+        for op in call.kwargs["operations"]:
+            commit_paths.append(op.path_in_repo)
+    assert any(path.startswith("data/proj/train-") for path in commit_paths)
+    assert "metadata.json" in commit_paths
+    assert "README.md" in commit_paths
+    assert saved.get("dataset_latest_version")
 
 
 def test_scan_for_text_occurrences_reports_encryption_error(monkeypatch, tmp_path):
@@ -218,6 +276,48 @@ def test_push_to_hf_exits_on_encryption_error(monkeypatch, tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "Error reading encrypted export file" in captured.err
+
+
+def test_export_dry_run_bypasses_confirm_gate(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "codeclaw.cli.export.load_config",
+        lambda: {"source": "both", "projects_confirmed": True, "stage": "configure"},
+    )
+    monkeypatch.setattr("codeclaw.cli.export._has_session_sources", lambda _src: True)
+    monkeypatch.setattr(
+        "codeclaw.cli.export.discover_projects",
+        lambda: [{"display_name": "proj", "dir_name": "proj", "session_count": 3, "total_size_bytes": 1024, "source": "claude"}],
+    )
+    monkeypatch.setattr("codeclaw.cli.export.get_hf_username", lambda: None)
+    monkeypatch.setattr(
+        "codeclaw.cli.export.export_to_jsonl",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("export_to_jsonl should not run in dry-run")),
+    )
+    monkeypatch.setattr(sys, "argv", ["codeclaw", "export", "--dry-run"])
+    codeclaw_cli.main()
+    payload = _extract_json(capsys.readouterr().out)
+    assert payload["dry_run"] is True
+    assert payload["estimated_sessions"] == 3
+    assert payload["would_publish"] is True
+
+
+def test_maybe_encrypt_file_auto_initializes_key(monkeypatch, tmp_path):
+    file_path = tmp_path / "export.jsonl"
+    file_path.write_text('{"x":1}\n', encoding="utf-8")
+    config = {"encryption_enabled": True, "encryption_key_ref": None}
+
+    monkeypatch.setattr("codeclaw.storage.encryption_status", lambda _cfg=None: {"key_present": False})
+    monkeypatch.setattr(
+        "codeclaw.storage.ensure_encryption_key",
+        lambda _cfg=None: (True, "file:default", "file"),
+    )
+    monkeypatch.setattr(
+        "codeclaw.storage.encrypt_text",
+        lambda plain, config=None: "CODECLAW_ENCRYPTED_V1:token",
+    )
+
+    assert maybe_encrypt_file(file_path, config=config) is True
+    assert config["encryption_key_ref"] == "file:default"
 
 
 def test_is_pid_running_handles_system_error(monkeypatch):

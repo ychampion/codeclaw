@@ -589,6 +589,7 @@ class TestPushToHuggingface:
             "data/my-project/train-1-abcdef12.jsonl",
             "data/other-proj/train-1-98765432.jsonl",
         ]
+        mock_api.create_commit.side_effect = RuntimeError("commit API unavailable in mock")
         mock_hf_module = MagicMock()
         mock_hf_module.HfApi.return_value = mock_api
 

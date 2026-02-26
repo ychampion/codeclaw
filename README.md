@@ -96,6 +96,7 @@ codeclaw share --publish --publish-attestation "User explicitly approved publish
 | `codeclaw config ...` | Configure repo, sources, exclusions, and redactions |
 | `codeclaw config --encryption on|off|status` | Manage encryption-at-rest mode |
 | `codeclaw export --no-push` | Export locally for review |
+| `codeclaw export --dry-run` | Preview what would be exported/published without writing files |
 | `codeclaw confirm ...` | Run checks and unlock push gate |
 | `codeclaw export --publish-attestation "..."` | Push dataset after approval |
 | `codeclaw share [--publish]` | Fast export flow with optional publish + dataset card update |

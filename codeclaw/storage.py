@@ -183,8 +183,13 @@ def maybe_encrypt_file(path: Path, config: CodeClawConfig | None = None) -> bool
         return False
     if not cfg.get("encryption_enabled", True):
         return False
-    if not cfg.get("encryption_key_ref"):
-        return False
+    status = encryption_status(cfg)
+    if not status.get("key_present"):
+        available, key_ref, _backend = ensure_encryption_key(cfg)
+        if available and key_ref:
+            cfg["encryption_key_ref"] = key_ref
+        else:
+            return False
     payload = read_text(path, config=cfg, strict=False)
     if is_encrypted_text(payload):
         return True
